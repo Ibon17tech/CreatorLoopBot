@@ -1050,6 +1050,37 @@ async def reject_video_handler(callback: CallbackQuery):
         parse_mode="HTML"
     )
     await callback.answer()
+# ==========================================
+# FOYDALANUVCHIGA JAVOB XABARI YUBORISH (YANGI)
+# ==========================================
+
+async def notify_user_about_status(callback: CallbackQuery, status_text: str):
+    """Foydalanuvchiga video holati haqida bildirishnoma yuboruvchi yordamchi funksiya"""
+    try:
+        # callback.data'dan user_id ni ajratib olamiz (masalan: pub_v_123456 -> 123456)
+        user_id = int(callback.data.split("_")[-1])
+        await callback.bot.send_message(chat_id=user_id, text=status_text, parse_mode="HTML")
+    except Exception as e:
+        print(f"Userga xabar yuborishda xatolik: {e}")
+
+
+# Avvalgi handler'laringizga xabar yuborishni ulash:
+@dp.callback_query(F.data.startswith("pub_v_"))
+async def publish_video_handler(callback: CallbackQuery):
+    # ... SIZNING MAVJUD KODINGIZ ...
+    
+    # Kodingiz oxiridagi await callback.answer() dan BITTAPOLDINGI QATORGA qo'shing:
+    await notify_user_about_status(callback, "🎉 <b>Tabriklaymiz!</b> Videongiz qabul qilindi va kanalga joylandi.")
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("rej_v_"))
+async def reject_video_handler(callback: CallbackQuery):
+    # ... SIZNING MAVJUD KODINGIZ ...
+
+    # Kodingiz oxiridagi await callback.answer() dan BITTAPOLDINGI QATORGA qo'shing:
+    await notify_user_about_status(callback, "❌ Afsuski, siz yuborgan video rad etildi.")
+    await callback.answer()
 
 
 # =========================
