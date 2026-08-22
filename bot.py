@@ -1,6 +1,6 @@
 import os
 import asyncio
-import aiosqlite
+import libsql_client
 
 from dotenv import load_dotenv
 from keep_alive import keep_alive
@@ -27,13 +27,23 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = os.getenv("ADMIN_ID")
 GROUP_ID = os.getenv("GROUP_ID")
 CHANNEL_ID = os.getenv("CHANNEL_ID")
-DB_NAME = "creatorloop.db"
+
+TURSO_DATABASE_URL = os.getenv("TURSO_DATABASE_URL")
+TURSO_AUTH_TOKEN = os.getenv("TURSO_AUTH_TOKEN")
+
+
+def get_db_client():
+    """Turso bazasiga asinxron client yaratadi"""
+    return libsql_client.create_client_async(
+        url=TURSO_DATABASE_URL,
+        auth_token=TURSO_AUTH_TOKEN
+    )
 
 
 async def init_db():
-    async with aiosqlite.connect(DB_NAME) as db:
+    async with get_db_client() as client:
         # Applications jadvali
-        await db.execute("""
+        await client.execute("""
             CREATE TABLE IF NOT EXISTS applications (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 telegram_id INTEGER UNIQUE,
@@ -49,7 +59,7 @@ async def init_db():
             )
         """)
         # Creators jadvali (Qabul qilinganlar)
-        await db.execute("""
+        await client.execute("""
             CREATE TABLE IF NOT EXISTS creators (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 telegram_id INTEGER UNIQUE,
@@ -61,7 +71,7 @@ async def init_db():
             )
         """)
         # Video submissions jadvali (Limit va statistika uchun)
-        await db.execute("""
+        await client.execute("""
             CREATE TABLE IF NOT EXISTS video_submissions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 telegram_id INTEGER,
@@ -70,14 +80,11 @@ async def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        await db.commit()
 
-        # Eski bazalarda youtube_url ustuni bo'lmasligi mumkin - shuni ham hisobga olamiz
         try:
-            await db.execute("ALTER TABLE video_submissions ADD COLUMN youtube_url TEXT")
-            await db.commit()
+            await client.execute("ALTER TABLE video_submissions ADD COLUMN youtube_url TEXT")
         except Exception:
-            pass  # Ustun allaqachon mavjud
+            pass  # Ustun allaqachon mavjud bo'lsa o'tkazib yuboriladi
 
 bot = Bot(token=BOT_TOKEN)
 
@@ -120,13 +127,13 @@ async def check_user_membership(user_id: int) -> tuple[bool, bool]:
 
 async def check_daily_video_limit(user_id: int) -> bool:
     """Foydalanuvchi oxirgi 24 soat ichida 2 tadan kam video yuborganini tekshiradi"""
-    async with aiosqlite.connect(DB_NAME) as db:
-        async with db.execute(
+    async with get_db_client() as client:
+        rs = await client.execute(
             "SELECT COUNT(*) FROM video_submissions WHERE telegram_id = ? AND created_at >= datetime('now', '-1 day')",
-            (user_id,)
-        ) as cursor:
-            count = await cursor.fetchone()
-            return count[0] < 2
+            [user_id]
+        )
+        count = rs.rows[0][0]
+        return count < 2
 
 
 # =========================
@@ -136,19 +143,15 @@ async def get_main_keyboard(user_id: int) -> ReplyKeyboardMarkup:
     """Foydalanuvchi holatiga qarab menyu tugmalarini shakllantiradi"""
     is_approved = False
     
-    # Bazadan tekshirish
-    async with aiosqlite.connect(DB_NAME) as db:
-        async with db.execute("SELECT status FROM creators WHERE telegram_id = ? AND status = 'active'", (user_id,)) as cursor:
-            creator = await cursor.fetchone()
-            if creator:
-                is_approved = True
+    async with get_db_client() as client:
+        rs = await client.execute("SELECT status FROM creators WHERE telegram_id = ? AND status = 'active'", [user_id])
+        if len(rs.rows) > 0:
+            is_approved = True
 
-    # Kanallar va guruhga a'zolikni tekshirish
     in_group, in_channel = await check_user_membership(user_id)
     
     keyboard_buttons = []
     
-    # Faqat arizasi tasdiqlangan va har ikkala manbaga a'zo foydalanuvchida paydo bo'ladi
     if is_approved and in_group and in_channel:
         keyboard_buttons.append([KeyboardButton(text="🎬 Yangi video yuborish")])
         
@@ -179,12 +182,12 @@ async def show_rules(message: Message):
 @dp.message(F.text == "📊 Statistika")
 @dp.message(Command("stats"))
 async def show_stats(message: Message):
-    async with aiosqlite.connect(DB_NAME) as db:
-        async with db.execute("SELECT COUNT(*) FROM creators WHERE status = 'active'") as cursor:
-            active_creators = (await cursor.fetchone())[0]
+    async with get_db_client() as client:
+        rs_creators = await client.execute("SELECT COUNT(*) FROM creators WHERE status = 'active'")
+        active_creators = rs_creators.rows[0][0]
 
-        async with db.execute("SELECT COUNT(*) FROM video_submissions WHERE status = 'published'") as cursor:
-            published_videos = (await cursor.fetchone())[0]
+        rs_videos = await client.execute("SELECT COUNT(*) FROM video_submissions WHERE status = 'published'")
+        published_videos = rs_videos.rows[0][0]
 
     stats_text = (
         "<b>📊 CreatorLoop Real-time Statistikasi</b>\n\n"
@@ -219,7 +222,6 @@ async def start_handler(message: Message):
         reply_markup=inline_keyboard,
         parse_mode="HTML"
     )
-    # Menyuni ham yangilab qo'yamiz
     await message.answer("Menyu faollashtirildi 👇", reply_markup=kb)
 
 
@@ -493,8 +495,8 @@ async def submit_application_handler(callback: CallbackQuery, state: FSMContext)
     goals_formatted = "\n".join([f"• {g}" for g in data.get("goals", [])])
     goals_str = ", ".join(data.get("goals", []))
 
-    async with aiosqlite.connect(DB_NAME) as db:
-        await db.execute("""
+    async with get_db_client() as client:
+        await client.execute("""
             INSERT INTO applications (telegram_id, username, name, youtube_url, niche, experience, goals, skills, status)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')
             ON CONFLICT(telegram_id) DO UPDATE SET
@@ -506,7 +508,7 @@ async def submit_application_handler(callback: CallbackQuery, state: FSMContext)
                 goals=EXCLUDED.goals,
                 skills=EXCLUDED.skills,
                 status='pending'
-        """, (
+        """, [
             user.id,
             user.username or "",
             data.get('name'),
@@ -515,8 +517,7 @@ async def submit_application_handler(callback: CallbackQuery, state: FSMContext)
             data.get('experience'),
             goals_str,
             data.get('skills')
-        ))
-        await db.commit()
+        ])
 
     await callback.message.edit_text(
         "🎉 <b>Arizangiz qabul qilindi!</b>\n\nAdminlar arizangizni va YouTube kanalingizni ko‘rib chiqishadi.\nNatija tez orada ushbu bot orqali yuboriladi.",
@@ -562,20 +563,17 @@ async def submit_application_handler(callback: CallbackQuery, state: FSMContext)
 async def approve_user_handler(callback: CallbackQuery):
     target_user_id = int(callback.data.split("_")[1])
 
-    async with aiosqlite.connect(DB_NAME) as db:
-        await db.execute("UPDATE applications SET status = 'accepted' WHERE telegram_id = ?", (target_user_id,))
+    async with get_db_client() as client:
+        await client.execute("UPDATE applications SET status = 'accepted' WHERE telegram_id = ?", [target_user_id])
         
-        async with db.execute("SELECT name, youtube_url, niche FROM applications WHERE telegram_id = ?", (target_user_id,)) as cursor:
-            row = await cursor.fetchone()
-            if row:
-                name, youtube_url, niche = row
-                await db.execute("""
-                    INSERT INTO creators (telegram_id, name, youtube_url, niche)
-                    VALUES (?, ?, ?, ?)
-                    ON CONFLICT(telegram_id) DO UPDATE SET status='active'
-                """, (target_user_id, name, youtube_url, niche))
-        
-        await db.commit()
+        rs = await client.execute("SELECT name, youtube_url, niche FROM applications WHERE telegram_id = ?", [target_user_id])
+        if len(rs.rows) > 0:
+            name, youtube_url, niche = rs.rows[0]
+            await client.execute("""
+                INSERT INTO creators (telegram_id, name, youtube_url, niche)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(telegram_id) DO UPDATE SET status='active'
+            """, [target_user_id, name, youtube_url, niche])
 
     group_invite_link = None
     if GROUP_ID:
@@ -630,9 +628,8 @@ async def approve_user_handler(callback: CallbackQuery):
 async def reject_user_handler(callback: CallbackQuery):
     target_user_id = int(callback.data.split("_")[1])
 
-    async with aiosqlite.connect(DB_NAME) as db:
-        await db.execute("UPDATE applications SET status = 'rejected' WHERE telegram_id = ?", (target_user_id,))
-        await db.commit()
+    async with get_db_client() as client:
+        await client.execute("UPDATE applications SET status = 'rejected' WHERE telegram_id = ?", [target_user_id])
 
     try:
         kb = await get_main_keyboard(target_user_id)
@@ -676,11 +673,11 @@ async def admin_panel_handler(message: Message):
         await message.answer("❌ Bu buyruq faqat adminlar uchun!")
         return
 
-    async with aiosqlite.connect(DB_NAME) as db:
-        async with db.execute(
+    async with get_db_client() as client:
+        rs = await client.execute(
             "SELECT telegram_id, name, youtube_url, niche, status FROM applications ORDER BY id DESC"
-        ) as cursor:
-            applications = await cursor.fetchall()
+        )
+        applications = rs.rows
 
     if not applications:
         await message.answer("ℹ️ Hozircha bazada birorta ham ariza yo'q.")
@@ -822,13 +819,12 @@ async def process_video_url(message: Message, state: FSMContext):
         )
         return
 
-    async with aiosqlite.connect(DB_NAME) as db:
-        cursor = await db.execute(
-            "INSERT INTO video_submissions (telegram_id, youtube_url, status) VALUES (?, ?, 'pending')",
-            (user.id, url)
+    async with get_db_client() as client:
+        rs = await client.execute(
+            "INSERT INTO video_submissions (telegram_id, youtube_url, status) VALUES (?, ?, 'pending') RETURNING id",
+            [user.id, url]
         )
-        await db.commit()
-        submission_id = cursor.lastrowid
+        submission_id = rs.rows[0][0]
 
     await state.clear()
 
@@ -870,27 +866,24 @@ async def process_video_url(message: Message, state: FSMContext):
 async def publish_video_handler(callback: CallbackQuery):
     submission_id = int(callback.data.split("_")[-1])
 
-    async with aiosqlite.connect(DB_NAME) as db:
-        async with db.execute(
+    async with get_db_client() as client:
+        rs = await client.execute(
             "SELECT telegram_id, youtube_url, status FROM video_submissions WHERE id = ?",
-            (submission_id,)
-        ) as cursor:
-            row = await cursor.fetchone()
+            [submission_id]
+        )
 
-        if not row:
+        if len(rs.rows) == 0:
             await callback.answer("❌ Bu video topilmadi (bazada yo'q).", show_alert=True)
             return
 
-        user_id, video_url, status = row
+        user_id, video_url, status = rs.rows[0]
 
         if status != 'pending':
             await callback.answer("⚠️ Bu video allaqachon ko'rib chiqilgan.", show_alert=True)
             return
 
-        # Creator ismini creators jadvalidan olamiz (agar bo'lmasa, telegram_id ko'rsatiladi)
-        async with db.execute("SELECT name FROM creators WHERE telegram_id = ?", (user_id,)) as cursor:
-            creator_row = await cursor.fetchone()
-            creator_name = creator_row[0] if creator_row else f"ID {user_id}"
+        rs_creator = await client.execute("SELECT name FROM creators WHERE telegram_id = ?", [user_id])
+        creator_name = rs_creator.rows[0][0] if len(rs_creator.rows) > 0 else f"ID {user_id}"
 
     post_text = (
         "🎬 <b>YANGI VIDEO!</b>\n\n"
@@ -904,13 +897,11 @@ async def publish_video_handler(callback: CallbackQuery):
         try:
             await bot.send_message(chat_id=CHANNEL_ID, text=post_text, parse_mode="HTML")
 
-            # Faqat aynan shu submission'ni published qilamiz (boshqa pending videolarga tegmaymiz)
-            async with aiosqlite.connect(DB_NAME) as db:
-                await db.execute(
+            async with get_db_client() as client:
+                await client.execute(
                     "UPDATE video_submissions SET status = 'published' WHERE id = ? AND status = 'pending'",
-                    (submission_id,)
+                    [submission_id]
                 )
-                await db.commit()
 
             kb = await get_main_keyboard(user_id)
             await bot.send_message(
@@ -935,29 +926,26 @@ async def publish_video_handler(callback: CallbackQuery):
 async def reject_video_handler(callback: CallbackQuery):
     submission_id = int(callback.data.split("_")[-1])
 
-    async with aiosqlite.connect(DB_NAME) as db:
-        async with db.execute(
+    async with get_db_client() as client:
+        rs = await client.execute(
             "SELECT telegram_id, status FROM video_submissions WHERE id = ?",
-            (submission_id,)
-        ) as cursor:
-            row = await cursor.fetchone()
+            [submission_id]
+        )
 
-        if not row:
+        if len(rs.rows) == 0:
             await callback.answer("❌ Bu video topilmadi (bazada yo'q).", show_alert=True)
             return
 
-        user_id, status = row
+        user_id, status = rs.rows[0]
 
         if status != 'pending':
             await callback.answer("⚠️ Bu video allaqachon ko'rib chiqilgan.", show_alert=True)
             return
 
-        # Video statusini bazada 'rejected' qilib belgilaymiz
-        await db.execute(
+        await client.execute(
             "UPDATE video_submissions SET status = 'rejected' WHERE id = ? AND status = 'pending'",
-            (submission_id,)
+            [submission_id]
         )
-        await db.commit()
 
     try:
         kb = await get_main_keyboard(user_id)
@@ -983,7 +971,7 @@ async def reject_video_handler(callback: CallbackQuery):
 
 async def main():
     await init_db()
-    print("CreatorLoop bot va Baza ishga tushdi...")
+    print("CreatorLoop bot va Turso Baza ishga tushdi...")
     await dp.start_polling(bot)
 
 
