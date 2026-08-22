@@ -69,6 +69,14 @@ async def init_db():
                 joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        # Video submissions jadvali (Limitni tekshirish uchun)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS video_submissions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                telegram_id INTEGER,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
         await db.commit()
 
 bot = Bot(token=BOT_TOKEN)
@@ -91,7 +99,6 @@ async def check_user_membership(user_id: int) -> tuple[bool, bool]:
     is_group = False
     is_channel = False
 
-    # Guruhni tekshirish
     if GROUP_ID:
         try:
             member = await bot.get_chat_member(chat_id=int(GROUP_ID), user_id=user_id)
@@ -100,7 +107,6 @@ async def check_user_membership(user_id: int) -> tuple[bool, bool]:
         except Exception:
             is_group = False
 
-    # Kanalni tekshirish
     if CHANNEL_ID:
         try:
             member = await bot.get_chat_member(chat_id=CHANNEL_ID, user_id=user_id)
@@ -110,6 +116,17 @@ async def check_user_membership(user_id: int) -> tuple[bool, bool]:
             is_channel = False
 
     return is_group, is_channel
+
+
+async def check_daily_video_limit(user_id: int) -> bool:
+    """Foydalanuvchi bugun 2 tadan kam video yuborganini tekshiradi"""
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute(
+            "SELECT COUNT(*) FROM video_submissions WHERE telegram_id = ? AND DATE(created_at) = DATE('now')",
+            (user_id,)
+        ) as cursor:
+            count = await cursor.fetchone()
+            return count[0] < 2
 
 
 # =========================
@@ -277,7 +294,6 @@ async def name_handler(message: Message, state: FSMContext):
         parse_mode="HTML"
     )
 
-# YouTube kanalini qabul qilish
 @dp.message(Application.youtube)
 async def youtube_handler(message: Message, state: FSMContext):
 
@@ -306,44 +322,20 @@ async def youtube_handler(message: Message, state: FSMContext):
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(
-                    text="⚽ Futbol",
-                    callback_data="niche_football"
-                ),
-                InlineKeyboardButton(
-                    text="🎮 Gaming",
-                    callback_data="niche_gaming"
-                )
+                InlineKeyboardButton(text="⚽ Futbol", callback_data="niche_football"),
+                InlineKeyboardButton(text="🎮 Gaming", callback_data="niche_gaming")
             ],
             [
-                InlineKeyboardButton(
-                    text="💻 Texnologiya",
-                    callback_data="niche_tech"
-                ),
-                InlineKeyboardButton(
-                    text="📚 Ta'lim",
-                    callback_data="niche_education"
-                )
+                InlineKeyboardButton(text="💻 Texnologiya", callback_data="niche_tech"),
+                InlineKeyboardButton(text="📚 Ta'lim", callback_data="niche_education")
             ],
             [
-                InlineKeyboardButton(
-                    text="🎥 Vlog",
-                    callback_data="niche_vlog"
-                ),
-                InlineKeyboardButton(
-                    text="🎭 Ko‘ngilochar",
-                    callback_data="niche_entertainment"
-                )
+                InlineKeyboardButton(text="🎥 Vlog", callback_data="niche_vlog"),
+                InlineKeyboardButton(text="🎭 Ko‘ngilochar", callback_data="niche_entertainment")
             ],
             [
-                InlineKeyboardButton(
-                    text="📰 Yangiliklar",
-                    callback_data="niche_news"
-                ),
-                InlineKeyboardButton(
-                    text="🎨 Boshqa",
-                    callback_data="niche_other"
-                )
+                InlineKeyboardButton(text="📰 Yangiliklar", callback_data="niche_news"),
+                InlineKeyboardButton(text="🎨 Boshqa", callback_data="niche_other")
             ]
         ]
     )
@@ -354,7 +346,6 @@ async def youtube_handler(message: Message, state: FSMContext):
         reply_markup=keyboard
     )
 
-# Niche tanlash
 @dp.callback_query(F.data.startswith("niche_"))
 async def niche_handler(callback: CallbackQuery, state: FSMContext):
 
@@ -380,30 +371,15 @@ async def niche_handler(callback: CallbackQuery, state: FSMContext):
         reply_markup=InlineKeyboardMarkup(
             inline_keyboard=[
                 [
-                    InlineKeyboardButton(
-                        text="1–3 oy",
-                        callback_data="exp_1_3"
-                    ),
-                    InlineKeyboardButton(
-                        text="3–6 oy",
-                        callback_data="exp_3_6"
-                    )
+                    InlineKeyboardButton(text="1–3 oy", callback_data="exp_1_3"),
+                    InlineKeyboardButton(text="3–6 oy", callback_data="exp_3_6")
                 ],
                 [
-                    InlineKeyboardButton(
-                        text="6–12 oy",
-                        callback_data="exp_6_12"
-                    ),
-                    InlineKeyboardButton(
-                        text="1–2 yil",
-                        callback_data="exp_1_2"
-                    )
+                    InlineKeyboardButton(text="6–12 oy", callback_data="exp_6_12"),
+                    InlineKeyboardButton(text="1–2 yil", callback_data="exp_1_2")
                 ],
                 [
-                    InlineKeyboardButton(
-                        text="2+ yil",
-                        callback_data="exp_2_plus"
-                    )
+                    InlineKeyboardButton(text="2+ yil", callback_data="exp_2_plus")
                 ]
             ]
         ),
@@ -411,10 +387,6 @@ async def niche_handler(callback: CallbackQuery, state: FSMContext):
     )
 
     await callback.answer()
-
-# =========================
-# YouTube tajribasi
-# =========================
 
 @dp.callback_query(F.data.startswith("exp_"))
 async def experience_handler(callback: CallbackQuery, state: FSMContext):
@@ -429,46 +401,24 @@ async def experience_handler(callback: CallbackQuery, state: FSMContext):
 
     experience = experience_map.get(callback.data)
 
-    await state.update_data(
-        experience=experience,
-        goals=[]
-    )
-
+    await state.update_data(experience=experience, goals=[])
     await state.set_state(Application.goals)
 
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(
-                    text="💬 Feedback",
-                    callback_data="goal_feedback"
-                ),
-                InlineKeyboardButton(
-                    text="🤝 Collaboration",
-                    callback_data="goal_collab"
-                )
+                InlineKeyboardButton(text="💬 Feedback", callback_data="goal_feedback"),
+                InlineKeyboardButton(text="🤝 Collaboration", callback_data="goal_collab")
             ],
             [
-                InlineKeyboardButton(
-                    text="👥 Networking",
-                    callback_data="goal_networking"
-                ),
-                InlineKeyboardButton(
-                    text="💡 Tajriba almashish",
-                    callback_data="goal_experience"
-                )
+                InlineKeyboardButton(text="👥 Networking", callback_data="goal_networking"),
+                InlineKeyboardButton(text="💡 Tajriba almashish", callback_data="goal_experience")
             ],
             [
-                InlineKeyboardButton(
-                    text="🚀 Birga rivojlanish",
-                    callback_data="goal_growth"
-                )
+                InlineKeyboardButton(text="🚀 Birga rivojlanish", callback_data="goal_growth")
             ],
             [
-                InlineKeyboardButton(
-                    text="➡️ Davom etish",
-                    callback_data="goals_done"
-                )
+                InlineKeyboardButton(text="➡️ Davom etish", callback_data="goals_done")
             ]
         ]
     )
@@ -484,20 +434,13 @@ async def experience_handler(callback: CallbackQuery, state: FSMContext):
 
     await callback.answer()
 
-# =========================
-# CreatorLoop maqsadlarini tanlash
-# =========================
-
 @dp.callback_query(Application.goals, F.data == "goals_done")
 async def goals_done_handler(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     goals = data.get("goals", [])
 
     if not goals:
-        await callback.answer(
-            "Avval kamida bitta variantni tanlang.",
-            show_alert=True
-        )
+        await callback.answer("Avval kamida bitta variantni tanlang.", show_alert=True)
         return
 
     await state.set_state(Application.skills)
@@ -516,7 +459,6 @@ async def goals_done_handler(callback: CallbackQuery, state: FSMContext):
     )
 
     await callback.answer()
-
 
 @dp.callback_query(Application.goals, F.data.startswith("goal_"))
 async def goal_toggle_handler(callback: CallbackQuery, state: FSMContext):
@@ -542,47 +484,24 @@ async def goal_toggle_handler(callback: CallbackQuery, state: FSMContext):
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(
-                    text=("✅ " if "💬 Feedback" in goals else "") + "💬 Feedback",
-                    callback_data="goal_feedback"
-                ),
-                InlineKeyboardButton(
-                    text=("✅ " if "🤝 Collaboration" in goals else "") + "🤝 Collaboration",
-                    callback_data="goal_collab"
-                )
+                InlineKeyboardButton(text=("✅ " if "💬 Feedback" in goals else "") + "💬 Feedback", callback_data="goal_feedback"),
+                InlineKeyboardButton(text=("✅ " if "🤝 Collaboration" in goals else "") + "🤝 Collaboration", callback_data="goal_collab")
             ],
             [
-                InlineKeyboardButton(
-                    text=("✅ " if "👥 Networking" in goals else "") + "👥 Networking",
-                    callback_data="goal_networking"
-                ),
-                InlineKeyboardButton(
-                    text=("✅ " if "💡 Tajriba almashish" in goals else "") + "💡 Tajriba almashish",
-                    callback_data="goal_experience"
-                )
+                InlineKeyboardButton(text=("✅ " if "👥 Networking" in goals else "") + "👥 Networking", callback_data="goal_networking"),
+                InlineKeyboardButton(text=("✅ " if "💡 Tajriba almashish" in goals else "") + "💡 Tajriba almashish", callback_data="goal_experience")
             ],
             [
-                InlineKeyboardButton(
-                    text=("✅ " if "🚀 Birga rivojlanish" in goals else "") + "🚀 Birga rivojlanish",
-                    callback_data="goal_growth"
-                )
+                InlineKeyboardButton(text=("✅ " if "🚀 Birga rivojlanish" in goals else "") + "🚀 Birga rivojlanish", callback_data="goal_growth")
             ],
             [
-                InlineKeyboardButton(
-                    text="➡️ Davom etish",
-                    callback_data="goals_done"
-                )
+                InlineKeyboardButton(text="➡️ Davom etish", callback_data="goals_done")
             ]
         ]
     )
 
     await callback.message.edit_reply_markup(reply_markup=keyboard)
     await callback.answer()
-
-
-# =========================
-# Application Preview
-# =========================
 
 @dp.message(Application.skills)
 async def skills_handler(message: Message, state: FSMContext):
@@ -614,27 +533,12 @@ async def skills_handler(message: Message, state: FSMContext):
 
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="✅ Arizani yuborish",
-                    callback_data="submit_application"
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="✏️ Qayta to‘ldirish",
-                    callback_data="accepted_rules"
-                )
-            ]
+            [InlineKeyboardButton(text="✅ Arizani yuborish", callback_data="submit_application")],
+            [InlineKeyboardButton(text="✏️ Qayta to‘ldirish", callback_data="accepted_rules")]
         ]
     )
 
     await message.answer(preview_text, reply_markup=keyboard, parse_mode="HTML")
-
-
-# =========================
-# Application Submit & Admin Notification
-# =========================
 
 @dp.callback_query(F.data == "submit_application")
 async def submit_application_handler(callback: CallbackQuery, state: FSMContext):
@@ -691,26 +595,15 @@ async def submit_application_handler(callback: CallbackQuery, state: FSMContext)
     admin_keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(
-                    text="✅ Qabul qilish",
-                    callback_data=f"approve_{user.id}"
-                ),
-                InlineKeyboardButton(
-                    text="❌ Rad etish",
-                    callback_data=f"reject_{user.id}"
-                )
+                InlineKeyboardButton(text="✅ Qabul qilish", callback_data=f"approve_{user.id}"),
+                InlineKeyboardButton(text="❌ Rad etish", callback_data=f"reject_{user.id}")
             ]
         ]
     )
 
     if ADMIN_ID:
         try:
-            await bot.send_message(
-                chat_id=int(ADMIN_ID),
-                text=admin_text,
-                reply_markup=admin_keyboard,
-                parse_mode="HTML"
-            )
+            await bot.send_message(chat_id=int(ADMIN_ID), text=admin_text, reply_markup=admin_keyboard, parse_mode="HTML")
         except Exception as e:
             print(f"Adminga xabar yuborishda xatolik: {e}")
 
@@ -777,25 +670,18 @@ async def approve_user_handler(callback: CallbackQuery):
             "📌 <b>Video yuborish tartibi va qoidalari:</b>\n"
             "• Faqat arizada ko'rsatilgan <b>shaxsiy YouTube kanalingizga</b> yuklangan videolarni yuborishingiz mumkin.\n"
             "• Yuborilgan videolar hamjamiyat kanalida e'lon qilinadi va boshqa creatorlardan **xolis feedback (fikr-mulohaza)** olasiz.\n"
-            "• Kontent hamjamiyat qoidalariga va odob-axloq me'yorlariga mos bo'lishi shart.\n\n"
+            "• Kunlik video yuborish cheklovi: <b>max 2 ta video</b>.\n\n"
             "⚠️ <i>Eslatma: Video yuborishdan oldin har ikkala manbaga ham a'zo bo'lishingiz shart!</i>\n\n"
             "Tayyor bo'lsangiz, pastdagi tugma orqali videongizni yuboring:"
         )
 
         keyboard = InlineKeyboardMarkup(
             inline_keyboard=[
-                [
-                    InlineKeyboardButton(text="🎬 Video yuborish", callback_data="submit_video")
-                ]
+                [InlineKeyboardButton(text="🎬 Video yuborish", callback_data="submit_video")]
             ]
         )
 
-        await bot.send_message(
-            chat_id=target_user_id, 
-            text=text, 
-            reply_markup=keyboard, 
-            parse_mode="HTML"
-        )
+        await bot.send_message(chat_id=target_user_id, text=text, reply_markup=keyboard, parse_mode="HTML")
         await callback.message.edit_text(callback.message.text + "\n\n✅ <b>QABUL QILINDI</b>", parse_mode="HTML")
     except Exception as e:
         await callback.answer(f"Xabar yuborishda xatolik: {e}", show_alert=True)
@@ -820,37 +706,20 @@ async def reject_user_handler(callback: CallbackQuery):
             ),
             parse_mode="HTML"
         )
-        await callback.message.edit_text(
-            callback.message.text + "\n\n❌ <b>RAD ETILDI (Baza yangilandi)</b>",
-            parse_mode="HTML"
-        )
+        await callback.message.edit_text(callback.message.text + "\n\n❌ <b>RAD ETILDI</b>", parse_mode="HTML")
     except Exception as e:
         await callback.answer(f"Foydalanuvchiga xabar yuborib bo'lmadi: {e}", show_alert=True)
 
     await callback.answer()
 
 
-# =========================
-# Orqaga
-# =========================
-
 @dp.callback_query(F.data == "back_start")
 async def back_start_handler(callback: CallbackQuery):
 
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="🚀 Ariza topshirish",
-                    callback_data="apply"
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="ℹ️ CreatorLoop haqida",
-                    callback_data="about"
-                )
-            ]
+            [InlineKeyboardButton(text="🚀 Ariza topshirish", callback_data="apply")],
+            [InlineKeyboardButton(text="ℹ️ CreatorLoop haqida", callback_data="about")]
         ]
     )
 
@@ -928,14 +797,8 @@ async def admin_panel_handler(message: Message):
             keyboard = InlineKeyboardMarkup(
                 inline_keyboard=[
                     [
-                        InlineKeyboardButton(
-                            text="✅ Qabul qilish",
-                            callback_data=f"approve_{telegram_id}"
-                        ),
-                        InlineKeyboardButton(
-                            text="❌ Rad etish",
-                            callback_data=f"reject_{telegram_id}"
-                        )
+                        InlineKeyboardButton(text="✅ Qabul qilish", callback_data=f"approve_{telegram_id}"),
+                        InlineKeyboardButton(text="❌ Rad etish", callback_data=f"reject_{telegram_id}")
                     ]
                 ]
             )
@@ -943,15 +806,15 @@ async def admin_panel_handler(message: Message):
 
 
 # =========================
-# VIDEO SUBMISSION PROCESS
+# VIDEO SUBMISSION PROCESS (LIMITS INTEGRATED)
 # =========================
 
-# Menyu orqali va Inline tugma orqali yuborish
 @dp.message(F.text == "🎬 Yangi video yuborish")
 @dp.callback_query(F.data == "submit_video")
 async def start_video_submission(event: Message | CallbackQuery, state: FSMContext):
     user_id = event.from_user.id
 
+    # 1. Kanal/guruh a'zoligini tekshirish
     in_group, in_channel = await check_user_membership(user_id)
 
     if not in_group or not in_channel:
@@ -975,6 +838,22 @@ async def start_video_submission(event: Message | CallbackQuery, state: FSMConte
             await event.answer(text, parse_mode="HTML")
         return
 
+    # 2. Kunlik limitni tekshirish (Max 2 ta)
+    can_submit = await check_daily_video_limit(user_id)
+    if not can_submit:
+        text = (
+            "⚠️ <b>Kunlik limitga yetdingiz!</b>\n\n"
+            "Siz bugun allaqachon 2 ta video yuborgansiz. "
+            "Kanal sifatini saqlash uchun kuniga ko'pi bilan 2 ta video yuborish mumkin.\n\n"
+            "Keyingi videongizni ertaga yuborishingiz mumkin. 😊"
+        )
+        if isinstance(event, CallbackQuery):
+            await event.message.answer(text, reply_markup=main_user_kb, parse_mode="HTML")
+            await event.answer()
+        else:
+            await event.answer(text, reply_markup=main_user_kb, parse_mode="HTML")
+        return
+
     await state.clear()
     await state.set_state(VideoSubmission.waiting_for_url)
     
@@ -990,7 +869,6 @@ async def start_video_submission(event: Message | CallbackQuery, state: FSMConte
         await event.answer(msg_text, parse_mode="HTML")
 
 
-# 1. Video linkini qabul qilish va adminga yuborish
 @dp.message(VideoSubmission.waiting_for_url)
 async def process_video_url(message: Message, state: FSMContext):
     url = message.text.strip()
@@ -1000,6 +878,12 @@ async def process_video_url(message: Message, state: FSMContext):
         return
 
     user = message.from_user
+
+    # Yuborilgan videoni bazaga yozib qo'yamiz (Limit hisobi uchun)
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute("INSERT INTO video_submissions (telegram_id) VALUES (?)", (user.id,))
+        await db.commit()
+
     await state.clear()
 
     await message.answer(
@@ -1015,7 +899,6 @@ async def process_video_url(message: Message, state: FSMContext):
         f"🔗 <b>Video Link:</b> {url}"
     )
 
-    # Callback_data ichiga foydalanuvchining ID si biriktiriladi
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -1037,7 +920,6 @@ async def process_video_url(message: Message, state: FSMContext):
             print(f"Adminga xabar yuborishda xatolik: {e}")
 
 
-# 2. Admin videoni kanalga chiqarishi va foydalanuvchiga habar borishi
 @dp.callback_query(F.data.startswith("pub_v_"))
 async def publish_video_handler(callback: CallbackQuery):
     user_id = int(callback.data.split("_")[-1])
@@ -1058,7 +940,6 @@ async def publish_video_handler(callback: CallbackQuery):
         try:
             await bot.send_message(chat_id=CHANNEL_ID, text=post_text, parse_mode="HTML")
             
-            # Userga bildirishnoma yuborish
             await bot.send_message(
                 chat_id=user_id,
                 text="🎉 <b>Tabriklaymiz!</b> Videongiz kanalga joylandi.",
@@ -1077,13 +958,11 @@ async def publish_video_handler(callback: CallbackQuery):
     await callback.answer()
 
 
-# 3. Admin videoni rad etishi va foydalanuvchiga xabar borishi
 @dp.callback_query(F.data.startswith("rej_v_"))
 async def reject_video_handler(callback: CallbackQuery):
     user_id = int(callback.data.split("_")[-1])
 
     try:
-        # Userga rad xabari yuborish
         await bot.send_message(
             chat_id=user_id,
             text="❌ Afsuski, siz yuborgan video adminga ma'qul kelmadi va rad etildi.",
