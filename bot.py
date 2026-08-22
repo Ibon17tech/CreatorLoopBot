@@ -6,14 +6,20 @@ from dotenv import load_dotenv
 from keep_alive import keep_alive
 from aiogram import Bot, Dispatcher
 from aiogram.filters import CommandStart
-from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
+from aiogram.types import (
+    Message, 
+    InlineKeyboardMarkup, 
+    InlineKeyboardButton, 
+    CallbackQuery,
+    ReplyKeyboardMarkup,
+    KeyboardButton
+)
 from aiogram import F
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
 
 keep_alive()
-
 
 load_dotenv()
 
@@ -22,6 +28,16 @@ ADMIN_ID = os.getenv("ADMIN_ID")
 GROUP_ID = os.getenv("GROUP_ID")
 CHANNEL_ID = os.getenv("CHANNEL_ID")
 DB_NAME = "creatorloop.db"
+
+# =========================
+# MENYU TUGMALARI (REPLY KEYBOARD)
+# =========================
+main_user_kb = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text="🎬 Yangi video yuborish")]
+    ],
+    resize_keyboard=True
+)
 
 async def init_db():
     async with aiosqlite.connect(DB_NAME) as db:
@@ -56,6 +72,7 @@ async def init_db():
         await db.commit()
 
 bot = Bot(token=BOT_TOKEN)
+
 class Application(StatesGroup):
     name = State()
     youtube = State()
@@ -63,8 +80,10 @@ class Application(StatesGroup):
     experience = State()
     goals = State()
     skills = State()
+
 class VideoSubmission(StatesGroup):
     waiting_for_url = State()
+
 dp = Dispatcher(storage=MemoryStorage())
 
 async def check_user_membership(user_id: int) -> tuple[bool, bool]:
@@ -135,7 +154,7 @@ async def start_handler(message: Message):
 # =========================
 
 @dp.callback_query(F.data == "about")
-async def about_handler(callback):
+async def about_handler(callback: CallbackQuery):
 
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
@@ -178,7 +197,7 @@ async def about_handler(callback):
 # =========================
 
 @dp.callback_query(F.data == "apply")
-async def apply_handler(callback):
+async def apply_handler(callback: CallbackQuery):
 
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
@@ -222,7 +241,7 @@ async def apply_handler(callback):
 # =========================
 
 @dp.callback_query(F.data == "accepted_rules")
-async def accepted_rules_handler(callback, state: FSMContext):
+async def accepted_rules_handler(callback: CallbackQuery, state: FSMContext):
 
     await state.set_state(Application.name)
 
@@ -234,6 +253,7 @@ async def accepted_rules_handler(callback, state: FSMContext):
     )
 
     await callback.answer()
+
 @dp.message(Application.name)
 async def name_handler(message: Message, state: FSMContext):
 
@@ -247,7 +267,6 @@ async def name_handler(message: Message, state: FSMContext):
         return
 
     await state.update_data(name=name)
-
     await state.set_state(Application.youtube)
 
     await message.answer(
@@ -257,13 +276,13 @@ async def name_handler(message: Message, state: FSMContext):
         "<code>https://youtube.com/@username</code>",
         parse_mode="HTML"
     )
+
 # YouTube kanalini qabul qilish
 @dp.message(Application.youtube)
 async def youtube_handler(message: Message, state: FSMContext):
 
     youtube_url = message.text.strip()
 
-    # YouTube havolasini oddiy tekshirish
     if not (
         youtube_url.startswith("youtube.com/")
         or youtube_url.startswith("www.youtube.com/")
@@ -281,10 +300,7 @@ async def youtube_handler(message: Message, state: FSMContext):
         )
         return
 
-    # YouTube linkni vaqtincha saqlaymiz
     await state.update_data(youtube_url=youtube_url)
-
-    # Keyingi bosqich
     await state.set_state(Application.niche)
 
     keyboard = InlineKeyboardMarkup(
@@ -337,9 +353,10 @@ async def youtube_handler(message: Message, state: FSMContext):
         "Endi kontentingizning asosiy yo‘nalishini tanlang:",
         reply_markup=keyboard
     )
+
 # Niche tanlash
 @dp.callback_query(F.data.startswith("niche_"))
-async def niche_handler(callback, state: FSMContext):
+async def niche_handler(callback: CallbackQuery, state: FSMContext):
 
     niche_map = {
         "niche_football": "⚽ Futbol",
@@ -355,7 +372,6 @@ async def niche_handler(callback, state: FSMContext):
     niche = niche_map.get(callback.data)
 
     await state.update_data(niche=niche)
-
     await state.set_state(Application.experience)
 
     await callback.message.edit_text(
@@ -395,12 +411,13 @@ async def niche_handler(callback, state: FSMContext):
     )
 
     await callback.answer()
+
 # =========================
 # YouTube tajribasi
 # =========================
 
 @dp.callback_query(F.data.startswith("exp_"))
-async def experience_handler(callback, state: FSMContext):
+async def experience_handler(callback: CallbackQuery, state: FSMContext):
 
     experience_map = {
         "exp_1_3": "1–3 oy",
@@ -466,6 +483,7 @@ async def experience_handler(callback, state: FSMContext):
     )
 
     await callback.answer()
+
 # =========================
 # CreatorLoop maqsadlarini tanlash
 # =========================
@@ -563,7 +581,7 @@ async def goal_toggle_handler(callback: CallbackQuery, state: FSMContext):
 
 
 # =========================
-# CreatorLoopga nima bera oladi? & Application Preview
+# Application Preview
 # =========================
 
 @dp.message(Application.skills)
@@ -626,7 +644,6 @@ async def submit_application_handler(callback: CallbackQuery, state: FSMContext)
     goals_formatted = "\n".join([f"• {g}" for g in data.get("goals", [])])
     goals_str = ", ".join(data.get("goals", []))
 
-    # Bazaga arizani saqlash (yoki yangilash)
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute("""
             INSERT INTO applications (telegram_id, username, name, youtube_url, niche, experience, goals, skills, status)
@@ -652,7 +669,6 @@ async def submit_application_handler(callback: CallbackQuery, state: FSMContext)
         ))
         await db.commit()
 
-    # 1. Foydalanuvchiga tasdiq xabari
     await callback.message.edit_text(
         "🎉 <b>Arizangiz qabul qilindi!</b>\n\n"
         "Adminlar arizangizni va YouTube kanalingizni ko‘rib chiqishadi.\n"
@@ -660,7 +676,6 @@ async def submit_application_handler(callback: CallbackQuery, state: FSMContext)
         parse_mode="HTML"
     )
 
-    # 2. Admin uchun bildirishnoma matni
     admin_text = (
         "🆕 <b>YANGI CREATORLOOP ARIZASI</b>\n\n"
         f"👤 <b>Ism:</b> {data.get('name')}\n"
@@ -704,7 +719,7 @@ async def submit_application_handler(callback: CallbackQuery, state: FSMContext)
 
 
 # =========================
-# Admin Action Handlers (Approve / Reject)
+# Admin User Application Handlers
 # =========================
 
 @dp.callback_query(F.data.startswith("approve_"))
@@ -726,7 +741,6 @@ async def approve_user_handler(callback: CallbackQuery):
         
         await db.commit()
 
-    # 1. Guruh linkini yaratish
     group_invite_link = None
     if GROUP_ID:
         try:
@@ -735,15 +749,12 @@ async def approve_user_handler(callback: CallbackQuery):
         except Exception as e:
             print(f"Guruh linkida xatolik: {e}")
 
-    # 2. Kanal linkini yaratish
     channel_invite_link = None
     if CHANNEL_ID:
         try:
-            # Agar CHANNEL_ID '-100' bilan boshlangan raqam bo'lsa (yopiq kanal)
             if str(CHANNEL_ID).startswith("-100"):
                 link = await bot.create_chat_invite_link(chat_id=int(CHANNEL_ID))
                 channel_invite_link = link.invite_link
-            # Agar CHANNEL_ID username bo'lsa (@ bilan)
             elif str(CHANNEL_ID).startswith("@"):
                 channel_invite_link = f"https://t.me/{CHANNEL_ID.replace('@', '')}"
             else:
@@ -824,7 +835,7 @@ async def reject_user_handler(callback: CallbackQuery):
 # =========================
 
 @dp.callback_query(F.data == "back_start")
-async def back_start_handler(callback):
+async def back_start_handler(callback: CallbackQuery):
 
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
@@ -853,19 +864,19 @@ async def back_start_handler(callback):
     )
 
     await callback.answer()
+
+
 # =========================
-# Admin Panel Commands (Umumiy ma'lumotlar ro'yxati)
+# Admin Panel Commands
 # =========================
 
 @dp.message(F.text == "/admin")
 async def admin_panel_handler(message: Message):
-    # Faqat adminga ruxsat berish
     if not ADMIN_ID or str(message.from_user.id) != str(ADMIN_ID):
         await message.answer("❌ Bu buyruq faqat adminlar uchun!")
         return
 
     async with aiosqlite.connect(DB_NAME) as db:
-        # Barcha arizalarni olish
         async with db.execute(
             "SELECT telegram_id, name, youtube_url, niche, status FROM applications ORDER BY id DESC"
         ) as cursor:
@@ -875,14 +886,12 @@ async def admin_panel_handler(message: Message):
         await message.answer("ℹ️ Hozircha bazada birorta ham ariza yo'q.")
         return
 
-    # Statuslar bo'yicha ajratib olish
     pending_apps = [a for a in applications if a[4] == 'pending']
     accepted_apps = [a for a in applications if a[4] == 'accepted']
     rejected_apps = [a for a in applications if a[4] == 'rejected']
 
     text = f"⚙️ <b>CREATORLOOP USERLAR RO'YXATI</b> (Jami: {len(applications)} ta)\n\n"
 
-    # 1. QABUL QILINGAN CREATORLAR
     text += f"✅ <b>Qabul qilinganlar ({len(accepted_apps)}):</b>\n"
     if accepted_apps:
         for app in accepted_apps:
@@ -893,7 +902,6 @@ async def admin_panel_handler(message: Message):
 
     text += "\n"
 
-    # 2. RAD ETILGANLAR
     text += f"❌ <b>Rad etilganlar ({len(rejected_apps)}):</b>\n"
     if rejected_apps:
         for app in rejected_apps:
@@ -902,10 +910,8 @@ async def admin_panel_handler(message: Message):
     else:
         text += "<i>Hozircha yo'q</i>\n"
 
-    # Avval qabul qilingan va rad etilganlar ro'yxatini chiqarish
     await message.answer(text, parse_mode="HTML", disable_web_page_preview=True)
 
-    # 3. KUTILAYOTGAN ARIZALAR (Tugmalari bilan alohida chiqariladi)
     if pending_apps:
         await message.answer(
             f"⏳ <b>Kutilayotgan arizalar ({len(pending_apps)} ta):</b>\nQuyida ularni tasdiqlashingiz mumkin 👇",
@@ -934,11 +940,18 @@ async def admin_panel_handler(message: Message):
                 ]
             )
             await message.answer(app_text, reply_markup=keyboard, parse_mode="HTML")
-@dp.callback_query(F.data == "submit_video")
-async def start_video_submission(callback: CallbackQuery, state: FSMContext):
-    user_id = callback.from_user.id
 
-    # Kanal va guruhda borligini tekshiramiz
+
+# =========================
+# VIDEO SUBMISSION PROCESS
+# =========================
+
+# Menyu orqali va Inline tugma orqali yuborish
+@dp.message(F.text == "🎬 Yangi video yuborish")
+@dp.callback_query(F.data == "submit_video")
+async def start_video_submission(event: Message | CallbackQuery, state: FSMContext):
+    user_id = event.from_user.id
+
     in_group, in_channel = await check_user_membership(user_id)
 
     if not in_group or not in_channel:
@@ -949,25 +962,34 @@ async def start_video_submission(callback: CallbackQuery, state: FSMContext):
             missing.append("• Asosiy Kanalimizga")
 
         missing_str = "\n".join(missing)
-        
-        await callback.message.answer(
+        text = (
             f"⚠️ <b>Video yuborish uchun a'zolik talab etiladi!</b>\n\n"
             f"Siz quyidagilarga a'zo emassiz yoki chiqib ketgansiz:\n"
             f"{missing_str}\n\n"
-            f"Iltimos, avval ularga qo'shiling va qayta urinib ko'ring!",
-            parse_mode="HTML"
+            f"Iltimos, avval ularga qo'shiling va qayta urinib ko'ring!"
         )
-        await callback.answer()
+        if isinstance(event, CallbackQuery):
+            await event.message.answer(text, parse_mode="HTML")
+            await event.answer()
+        else:
+            await event.answer(text, parse_mode="HTML")
         return
 
-    # Agar hammasi joyida bo'lsa
+    await state.clear()
     await state.set_state(VideoSubmission.waiting_for_url)
-    await callback.message.answer(
+    
+    msg_text = (
         "🎬 <b>Yangi YouTube videongiz havolasini (link) yuboring:</b>\n\n"
-        "Masalan:\n<code>https://youtu.be/dQw4w9WgXcQ</code>",
-        parse_mode="HTML"
+        "Masalan:\n<code>https://youtu.be/dQw4w9WgXcQ</code>"
     )
-    await callback.answer()
+    
+    if isinstance(event, CallbackQuery):
+        await event.message.answer(msg_text, parse_mode="HTML")
+        await event.answer()
+    else:
+        await event.answer(msg_text, parse_mode="HTML")
+
+
 # 1. Video linkini qabul qilish va adminga yuborish
 @dp.message(VideoSubmission.waiting_for_url)
 async def process_video_url(message: Message, state: FSMContext):
@@ -982,7 +1004,8 @@ async def process_video_url(message: Message, state: FSMContext):
 
     await message.answer(
         "✅ Videongiz qabul qilindi va admin moderatsiyasiga yuborildi!\n"
-        "Tasdiqlangach, CreatorLoop kanalida e'lon qilinadi."
+        "Tasdiqlangach, CreatorLoop kanalida e'lon qilinadi.",
+        reply_markup=main_user_kb
     )
 
     admin_text = (
@@ -992,6 +1015,7 @@ async def process_video_url(message: Message, state: FSMContext):
         f"🔗 <b>Video Link:</b> {url}"
     )
 
+    # Callback_data ichiga foydalanuvchining ID si biriktiriladi
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -1013,9 +1037,11 @@ async def process_video_url(message: Message, state: FSMContext):
             print(f"Adminga xabar yuborishda xatolik: {e}")
 
 
-# 2. Admin videoni kanalga chiqarishi
+# 2. Admin videoni kanalga chiqarishi va foydalanuvchiga habar borishi
 @dp.callback_query(F.data.startswith("pub_v_"))
 async def publish_video_handler(callback: CallbackQuery):
+    user_id = int(callback.data.split("_")[-1])
+
     text_lines = callback.message.text.split("\n")
     video_url = text_lines[-1].replace("Video Link: ", "").strip()
     creator_info = text_lines[2].replace("Creator: ", "").strip()
@@ -1031,55 +1057,46 @@ async def publish_video_handler(callback: CallbackQuery):
     if CHANNEL_ID:
         try:
             await bot.send_message(chat_id=CHANNEL_ID, text=post_text, parse_mode="HTML")
+            
+            # Userga bildirishnoma yuborish
+            await bot.send_message(
+                chat_id=user_id,
+                text="🎉 <b>Tabriklaymiz!</b> Videongiz kanalga joylandi.",
+                reply_markup=main_user_kb,
+                parse_mode="HTML"
+            )
+
             await callback.message.edit_text(
                 callback.message.text + "\n\n✅ <b>KANALGA CHIQARILDI</b>",
                 parse_mode="HTML"
             )
         except Exception as e:
-            await callback.answer(f"Kanalga joylashda xatolik: {e}", show_alert=True)
+            await callback.answer(f"Xatolik yuz berdi: {e}", show_alert=True)
             return
 
     await callback.answer()
 
 
-# 3. Admin videoni rad etishi
+# 3. Admin videoni rad etishi va foydalanuvchiga xabar borishi
 @dp.callback_query(F.data.startswith("rej_v_"))
 async def reject_video_handler(callback: CallbackQuery):
+    user_id = int(callback.data.split("_")[-1])
+
+    try:
+        # Userga rad xabari yuborish
+        await bot.send_message(
+            chat_id=user_id,
+            text="❌ Afsuski, siz yuborgan video adminga ma'qul kelmadi va rad etildi.",
+            reply_markup=main_user_kb,
+            parse_mode="HTML"
+        )
+    except Exception as e:
+        print(f"Foydalanuvchiga rad xabarini yuborishda xatolik: {e}")
+
     await callback.message.edit_text(
         callback.message.text + "\n\n❌ <b>VIDEO RAD ETILDI</b>",
         parse_mode="HTML"
     )
-    await callback.answer()
-# ==========================================
-# FOYDALANUVCHIGA JAVOB XABARI YUBORISH (YANGI)
-# ==========================================
-
-async def notify_user_about_status(callback: CallbackQuery, status_text: str):
-    """Foydalanuvchiga video holati haqida bildirishnoma yuboruvchi yordamchi funksiya"""
-    try:
-        # callback.data'dan user_id ni ajratib olamiz (masalan: pub_v_123456 -> 123456)
-        user_id = int(callback.data.split("_")[-1])
-        await callback.bot.send_message(chat_id=user_id, text=status_text, parse_mode="HTML")
-    except Exception as e:
-        print(f"Userga xabar yuborishda xatolik: {e}")
-
-
-# Avvalgi handler'laringizga xabar yuborishni ulash:
-@dp.callback_query(F.data.startswith("pub_v_"))
-async def publish_video_handler(callback: CallbackQuery):
-    # ... SIZNING MAVJUD KODINGIZ ...
-    
-    # Kodingiz oxiridagi await callback.answer() dan BITTAPOLDINGI QATORGA qo'shing:
-    await notify_user_about_status(callback, "🎉 <b>Tabriklaymiz!</b> Videongiz qabul qilindi va kanalga joylandi.")
-    await callback.answer()
-
-
-@dp.callback_query(F.data.startswith("rej_v_"))
-async def reject_video_handler(callback: CallbackQuery):
-    # ... SIZNING MAVJUD KODINGIZ ...
-
-    # Kodingiz oxiridagi await callback.answer() dan BITTAPOLDINGI QATORGA qo'shing:
-    await notify_user_about_status(callback, "❌ Afsuski, siz yuborgan video rad etildi.")
     await callback.answer()
 
 
