@@ -29,16 +29,6 @@ GROUP_ID = os.getenv("GROUP_ID")
 CHANNEL_ID = os.getenv("CHANNEL_ID")
 DB_NAME = "creatorloop.db"
 
-# =========================
-# MENYU TUGMALARI (REPLY KEYBOARD)
-# =========================
-main_user_kb = ReplyKeyboardMarkup(
-    keyboard=[
-        [KeyboardButton(text="🎬 Yangi video yuborish")],
-        [KeyboardButton(text="📊 Statistika"), KeyboardButton(text="📜 Qoidalar")]
-    ],
-    resize_keyboard=True
-)
 
 async def init_db():
     async with aiosqlite.connect(DB_NAME) as db:
@@ -132,6 +122,34 @@ async def check_daily_video_limit(user_id: int) -> bool:
 
 
 # =========================
+# DINAMIK MENYU TUGMALARI
+# =========================
+async def get_main_keyboard(user_id: int) -> ReplyKeyboardMarkup:
+    """Foydalanuvchi holatiga qarab menyu tugmalarini shakllantiradi"""
+    is_approved = False
+    
+    # Bazadan tekshirish
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute("SELECT status FROM creators WHERE telegram_id = ? AND status = 'active'", (user_id,)) as cursor:
+            creator = await cursor.fetchone()
+            if creator:
+                is_approved = True
+
+    # Kanallar va guruhga a'zolikni tekshirish
+    in_group, in_channel = await check_user_membership(user_id)
+    
+    keyboard_buttons = []
+    
+    # Faqat arizasi tasdiqlangan va har ikkala manbaga a'zo foydalanuvchida paydo bo'ladi
+    if is_approved and in_group and in_channel:
+        keyboard_buttons.append([KeyboardButton(text="🎬 Yangi video yuborish")])
+        
+    keyboard_buttons.append([KeyboardButton(text="📊 Statistika"), KeyboardButton(text="📜 Qoidalar")])
+    
+    return ReplyKeyboardMarkup(keyboard=keyboard_buttons, resize_keyboard=True)
+
+
+# =========================
 # RULES & STATS COMMANDS
 # =========================
 
@@ -146,7 +164,8 @@ async def show_rules(message: Message):
         "4. <b>O'zaro yordam (Feedback):</b> Kanalda e'lon qilingan boshqa creatorlarning videolariga xolis va sifatli feedback berish majburiy.\n"
         "5. <b>Faollik:</b> Hamjamiyatda faol bo'lmagan a'zolar avtomatik ravishda safdan chiqarilishi mumkin."
     )
-    await message.answer(rules_text, reply_markup=main_user_kb, parse_mode="HTML")
+    kb = await get_main_keyboard(message.from_user.id)
+    await message.answer(rules_text, reply_markup=kb, parse_mode="HTML")
 
 
 @dp.message(F.text == "📊 Statistika")
@@ -165,7 +184,8 @@ async def show_stats(message: Message):
         f"🎬 <b>Chiqarilgan Videolar:</b> {published_videos} ta\n\n"
         "<i>Eslatma: Ushbu ma'lumotlar bazadan avtomatik hisoblanadi.</i>"
     )
-    await message.answer(stats_text, reply_markup=main_user_kb, parse_mode="HTML")
+    kb = await get_main_keyboard(message.from_user.id)
+    await message.answer(stats_text, reply_markup=kb, parse_mode="HTML")
 
 
 # =========================
@@ -174,21 +194,25 @@ async def show_stats(message: Message):
 
 @dp.message(CommandStart())
 async def start_handler(message: Message):
-    keyboard = InlineKeyboardMarkup(
+    inline_keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="🚀 Ariza topshirish", callback_data="apply")],
             [InlineKeyboardButton(text="ℹ️ CreatorLoop haqida", callback_data="about")]
         ]
     )
 
+    kb = await get_main_keyboard(message.from_user.id)
+
     await message.answer(
         "👋 <b>CreatorLoop'ga xush kelibsiz!</b>\n\n"
         "🇺🇿 O‘zbekistonlik YouTube creatorlar uchun yopiq creator hamjamiyati.\n\n"
         "Bu yerda creatorlar bir-biriga feedback beradi, tajriba almashadi, collaboration qiladi va birga rivojlanadi.\n\n"
         "🎯 Maqsadimiz — shunchaki ko‘p creator yig‘ish emas, <b>faol va kuchli community</b> qurish.",
-        reply_markup=keyboard,
+        reply_markup=inline_keyboard,
         parse_mode="HTML"
     )
+    # Menyuni ham yangilab qo'yamiz
+    await message.answer("Menyu faollashtirildi 👇", reply_markup=kb)
 
 
 # =========================
@@ -582,11 +606,11 @@ async def approve_user_handler(callback: CallbackQuery):
             "• Faqat arizada ko'rsatilgan <b>shaxsiy YouTube kanalingizga</b> yuklangan videolarni yuborishingiz mumkin.\n"
             "• Yuborilgan videolar hamjamiyat kanalida e'lon qilinadi va boshqa creatorlardan <b>xolis feedback (fikr-mulohaza)</b> olasiz.\n"
             "• Kunlik video yuborish cheklovi: <b>max 2 ta video</b>.\n\n"
-            "⚠️ <i>Eslatma: Video yuborishdan oldin har ikkala manbaga ham a'zo bo'lishingiz shart!</i>\n\n"
-            "Tayyor bo'lsangiz, quyidagi menyu orqali videolaringizni yuborishingiz mumkin:"
+            "⚠️ <i>Eslatma: Kanal hamda guruhga to'liq qo'shilganingizdan so'ng, menyuda '🎬 Yangi video yuborish' tugmasi avtomatik paydo bo'ladi!</i>"
         )
 
-        await bot.send_message(chat_id=target_user_id, text=text, reply_markup=main_user_kb, parse_mode="HTML")
+        kb = await get_main_keyboard(target_user_id)
+        await bot.send_message(chat_id=target_user_id, text=text, reply_markup=kb, parse_mode="HTML")
         await callback.message.edit_text(callback.message.text + "\n\n✅ <b>QABUL QILINDI</b>", parse_mode="HTML")
     except Exception as e:
         await callback.answer(f"Xabar yuborishda xatolik: {e}", show_alert=True)
@@ -603,9 +627,11 @@ async def reject_user_handler(callback: CallbackQuery):
         await db.commit()
 
     try:
+        kb = await get_main_keyboard(target_user_id)
         await bot.send_message(
             chat_id=target_user_id,
             text="Afsuski, hozircha CreatorLoop'ga qabul qilina olmadingiz.\n\nRivojlanishdan to'xtamang! Keyinchalik qayta ariza topshirishingiz mumkin.",
+            reply_markup=kb,
             parse_mode="HTML"
         )
         await callback.message.edit_text(callback.message.text + "\n\n❌ <b>RAD ETILDI</b>", parse_mode="HTML")
@@ -712,6 +738,7 @@ async def start_video_submission(event: Message | CallbackQuery, state: FSMConte
     user_id = event.from_user.id
 
     in_group, in_channel = await check_user_membership(user_id)
+    kb = await get_main_keyboard(user_id)
 
     if not in_group or not in_channel:
         missing = []
@@ -728,10 +755,10 @@ async def start_video_submission(event: Message | CallbackQuery, state: FSMConte
             f"Iltimos, avval ularga qo'shiling va qayta urinib ko'ring!"
         )
         if isinstance(event, CallbackQuery):
-            await event.message.answer(text, parse_mode="HTML")
+            await event.message.answer(text, reply_markup=kb, parse_mode="HTML")
             await event.answer()
         else:
-            await event.answer(text, parse_mode="HTML")
+            await event.answer(text, reply_markup=kb, parse_mode="HTML")
         return
 
     can_submit = await check_daily_video_limit(user_id)
@@ -743,10 +770,10 @@ async def start_video_submission(event: Message | CallbackQuery, state: FSMConte
             "Keyingi videongizni ertaga yuborishingiz mumkin. 😊"
         )
         if isinstance(event, CallbackQuery):
-            await event.message.answer(text, reply_markup=main_user_kb, parse_mode="HTML")
+            await event.message.answer(text, reply_markup=kb, parse_mode="HTML")
             await event.answer()
         else:
-            await event.answer(text, reply_markup=main_user_kb, parse_mode="HTML")
+            await event.answer(text, reply_markup=kb, parse_mode="HTML")
         return
 
     await state.clear()
@@ -767,6 +794,7 @@ async def start_video_submission(event: Message | CallbackQuery, state: FSMConte
 @dp.message(VideoSubmission.waiting_for_url)
 async def process_video_url(message: Message, state: FSMContext):
     url = message.text.strip()
+    kb = await get_main_keyboard(message.from_user.id)
 
     if not ("youtube.com" in url or "youtu.be" in url):
         await message.answer("❌ Bu YouTube video havolasiga o'xshamayapti. Qayta yuborib ko'ring:")
@@ -781,7 +809,7 @@ async def process_video_url(message: Message, state: FSMContext):
             "⚠️ <b>Kunlik limitga yetdingiz!</b>\n\n"
             "Siz bugun allaqachon 2 ta video yuborgansiz. "
             "Keyingi videongizni ertaga yuborishingiz mumkin. 😊",
-            reply_markup=main_user_kb,
+            reply_markup=kb,
             parse_mode="HTML"
         )
         return
@@ -795,7 +823,7 @@ async def process_video_url(message: Message, state: FSMContext):
     await message.answer(
         "✅ Videongiz qabul qilindi va admin moderatsiyasiga yuborildi!\n"
         "Tasdiqlangach, CreatorLoop kanalida e'lon qilinadi.",
-        reply_markup=main_user_kb
+        reply_markup=kb
     )
 
     admin_text = (
@@ -850,10 +878,11 @@ async def publish_video_handler(callback: CallbackQuery):
                 await db.execute("UPDATE video_submissions SET status = 'published' WHERE telegram_id = ? AND status = 'pending'", (user_id,))
                 await db.commit()
 
+            kb = await get_main_keyboard(user_id)
             await bot.send_message(
                 chat_id=user_id,
                 text="🎉 <b>Tabriklaymiz!</b> Videongiz kanalga joylandi.",
-                reply_markup=main_user_kb,
+                reply_markup=kb,
                 parse_mode="HTML"
             )
 
@@ -873,10 +902,11 @@ async def reject_video_handler(callback: CallbackQuery):
     user_id = int(callback.data.split("_")[-1])
 
     try:
+        kb = await get_main_keyboard(user_id)
         await bot.send_message(
             chat_id=user_id,
             text="❌ Afsuski, siz yuborgan video adminga ma'qul kelmadi va rad etildi.",
-            reply_markup=main_user_kb,
+            reply_markup=kb,
             parse_mode="HTML"
         )
     except Exception as e:
