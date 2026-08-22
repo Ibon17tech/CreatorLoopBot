@@ -65,11 +65,19 @@ async def init_db():
             CREATE TABLE IF NOT EXISTS video_submissions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 telegram_id INTEGER,
+                youtube_url TEXT,
                 status TEXT DEFAULT 'pending',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
         await db.commit()
+
+        # Eski bazalarda youtube_url ustuni bo'lmasligi mumkin - shuni ham hisobga olamiz
+        try:
+            await db.execute("ALTER TABLE video_submissions ADD COLUMN youtube_url TEXT")
+            await db.commit()
+        except Exception:
+            pass  # Ustun allaqachon mavjud
 
 bot = Bot(token=BOT_TOKEN)
 
@@ -815,8 +823,12 @@ async def process_video_url(message: Message, state: FSMContext):
         return
 
     async with aiosqlite.connect(DB_NAME) as db:
-        await db.execute("INSERT INTO video_submissions (telegram_id, status) VALUES (?, 'pending')", (user.id,))
+        cursor = await db.execute(
+            "INSERT INTO video_submissions (telegram_id, youtube_url, status) VALUES (?, ?, 'pending')",
+            (user.id, url)
+        )
         await db.commit()
+        submission_id = cursor.lastrowid
 
     await state.clear()
 
@@ -836,8 +848,8 @@ async def process_video_url(message: Message, state: FSMContext):
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text="✅ Kanalga chiqarish", callback_data=f"pub_v_{user.id}"),
-                InlineKeyboardButton(text="❌ Rad etish", callback_data=f"rej_v_{user.id}")
+                InlineKeyboardButton(text="✅ Kanalga chiqarish", callback_data=f"pub_v_{submission_id}"),
+                InlineKeyboardButton(text="❌ Rad etish", callback_data=f"rej_v_{submission_id}")
             ]
         ]
     )
@@ -856,15 +868,33 @@ async def process_video_url(message: Message, state: FSMContext):
 
 @dp.callback_query(F.data.startswith("pub_v_"))
 async def publish_video_handler(callback: CallbackQuery):
-    user_id = int(callback.data.split("_")[-1])
+    submission_id = int(callback.data.split("_")[-1])
 
-    text_lines = callback.message.text.split("\n")
-    video_url = text_lines[-1].replace("Video Link: ", "").strip()
-    creator_info = text_lines[2].replace("Creator: ", "").strip()
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute(
+            "SELECT telegram_id, youtube_url, status FROM video_submissions WHERE id = ?",
+            (submission_id,)
+        ) as cursor:
+            row = await cursor.fetchone()
+
+        if not row:
+            await callback.answer("❌ Bu video topilmadi (bazada yo'q).", show_alert=True)
+            return
+
+        user_id, video_url, status = row
+
+        if status != 'pending':
+            await callback.answer("⚠️ Bu video allaqachon ko'rib chiqilgan.", show_alert=True)
+            return
+
+        # Creator ismini creators jadvalidan olamiz (agar bo'lmasa, telegram_id ko'rsatiladi)
+        async with db.execute("SELECT name FROM creators WHERE telegram_id = ?", (user_id,)) as cursor:
+            creator_row = await cursor.fetchone()
+            creator_name = creator_row[0] if creator_row else f"ID {user_id}"
 
     post_text = (
         "🎬 <b>YANGI VIDEO!</b>\n\n"
-        f"👤 <b>Creator:</b> {creator_info}\n\n"
+        f"👤 <b>Creator:</b> {creator_name}\n\n"
         f"🔗 <b>Video linki:</b> {video_url}\n\n"
         "💬 <b>Feedback qoldiring:</b>\n"
         "Videoni tomosha qiling va pastdagi izohlar bo'limida videoning kuchli/o'stirish kerak bo'lgan taraflari haqida o'z fikringizni yozib qoldiring!"
@@ -873,9 +903,13 @@ async def publish_video_handler(callback: CallbackQuery):
     if CHANNEL_ID:
         try:
             await bot.send_message(chat_id=CHANNEL_ID, text=post_text, parse_mode="HTML")
-            
+
+            # Faqat aynan shu submission'ni published qilamiz (boshqa pending videolarga tegmaymiz)
             async with aiosqlite.connect(DB_NAME) as db:
-                await db.execute("UPDATE video_submissions SET status = 'published' WHERE telegram_id = ? AND status = 'pending'", (user_id,))
+                await db.execute(
+                    "UPDATE video_submissions SET status = 'published' WHERE id = ? AND status = 'pending'",
+                    (submission_id,)
+                )
                 await db.commit()
 
             kb = await get_main_keyboard(user_id)
@@ -899,7 +933,31 @@ async def publish_video_handler(callback: CallbackQuery):
 
 @dp.callback_query(F.data.startswith("rej_v_"))
 async def reject_video_handler(callback: CallbackQuery):
-    user_id = int(callback.data.split("_")[-1])
+    submission_id = int(callback.data.split("_")[-1])
+
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute(
+            "SELECT telegram_id, status FROM video_submissions WHERE id = ?",
+            (submission_id,)
+        ) as cursor:
+            row = await cursor.fetchone()
+
+        if not row:
+            await callback.answer("❌ Bu video topilmadi (bazada yo'q).", show_alert=True)
+            return
+
+        user_id, status = row
+
+        if status != 'pending':
+            await callback.answer("⚠️ Bu video allaqachon ko'rib chiqilgan.", show_alert=True)
+            return
+
+        # Video statusini bazada 'rejected' qilib belgilaymiz
+        await db.execute(
+            "UPDATE video_submissions SET status = 'rejected' WHERE id = ? AND status = 'pending'",
+            (submission_id,)
+        )
+        await db.commit()
 
     try:
         kb = await get_main_keyboard(user_id)
