@@ -119,10 +119,10 @@ async def check_user_membership(user_id: int) -> tuple[bool, bool]:
 
 
 async def check_daily_video_limit(user_id: int) -> bool:
-    """Foydalanuvchi bugun 2 tadan kam video yuborganini tekshiradi"""
+    """Foydalanuvchi oxirgi 24 soat ichida 2 tadan kam video yuborganini tekshiradi"""
     async with aiosqlite.connect(DB_NAME) as db:
         async with db.execute(
-            "SELECT COUNT(*) FROM video_submissions WHERE telegram_id = ? AND DATE(created_at) = DATE('now')",
+            "SELECT COUNT(*) FROM video_submissions WHERE telegram_id = ? AND created_at >= datetime('now', '-1 day')",
             (user_id,)
         ) as cursor:
             count = await cursor.fetchone()
@@ -878,6 +878,19 @@ async def process_video_url(message: Message, state: FSMContext):
         return
 
     user = message.from_user
+
+    # Havola yuborilgan paytda limitni qayta tekshirish
+    can_submit = await check_daily_video_limit(user.id)
+    if not can_submit:
+        await state.clear()
+        await message.answer(
+            "⚠️ <b>Kunlik limitga yetdingiz!</b>\n\n"
+            "Siz bugun allaqachon 2 ta video yuborgansiz. "
+            "Keyingi videongizni ertaga yuborishingiz mumkin. 😊",
+            reply_markup=main_user_kb,
+            parse_mode="HTML"
+        )
+        return
 
     # Yuborilgan videoni bazaga yozib qo'yamiz (Limit hisobi uchun)
     async with aiosqlite.connect(DB_NAME) as db:
