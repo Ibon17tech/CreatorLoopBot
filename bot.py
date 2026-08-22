@@ -5,7 +5,7 @@ import aiosqlite
 from dotenv import load_dotenv
 from keep_alive import keep_alive
 from aiogram import Bot, Dispatcher
-from aiogram.filters import CommandStart
+from aiogram.filters import CommandStart, Command
 from aiogram.types import (
     Message, 
     InlineKeyboardMarkup, 
@@ -34,7 +34,8 @@ DB_NAME = "creatorloop.db"
 # =========================
 main_user_kb = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text="🎬 Yangi video yuborish")]
+        [KeyboardButton(text="🎬 Yangi video yuborish")],
+        [KeyboardButton(text="📊 Statistika"), KeyboardButton(text="📜 Qoidalar")]
     ],
     resize_keyboard=True
 )
@@ -69,11 +70,12 @@ async def init_db():
                 joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        # Video submissions jadvali (Limitni tekshirish uchun)
+        # Video submissions jadvali (Limit va statistika uchun)
         await db.execute("""
             CREATE TABLE IF NOT EXISTS video_submissions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 telegram_id INTEGER,
+                status TEXT DEFAULT 'pending',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
@@ -130,37 +132,60 @@ async def check_daily_video_limit(user_id: int) -> bool:
 
 
 # =========================
+# RULES & STATS COMMANDS
+# =========================
+
+@dp.message(F.text == "📜 Qoidalar")
+@dp.message(Command("rules"))
+async def show_rules(message: Message):
+    rules_text = (
+        "<b>📜 CreatorLoop Hamjamiyati Qoidalari</b>\n\n"
+        "1. <b>Talablar:</b> O'zbekistonlik YouTube creator, kamida 500+ subscriber va kanal ochilganiga 1 oydan oshgan bo'lishi kerak.\n"
+        "2. <b>Mavzu cheklovlari:</b> O'zbekiston qonunchiligiga zid, diniy va siyosiy bahsli kontentlar qabul qilinmaydi.\n"
+        "3. <b>Kontent sifati:</b> Spam, scam va reklama xarakteridagi videolar taqiqlanadi.\n"
+        "4. <b>O'zaro yordam (Feedback):</b> Kanalda e'lon qilingan boshqa creatorlarning videolariga xolis va sifatli feedback berish majburiy.\n"
+        "5. <b>Faollik:</b> Hamjamiyatda faol bo'lmagan a'zolar avtomatik ravishda safdan chiqarilishi mumkin."
+    )
+    await message.answer(rules_text, reply_markup=main_user_kb, parse_mode="HTML")
+
+
+@dp.message(F.text == "📊 Statistika")
+@dp.message(Command("stats"))
+async def show_stats(message: Message):
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute("SELECT COUNT(*) FROM creators WHERE status = 'active'") as cursor:
+            active_creators = (await cursor.fetchone())[0]
+
+        async with db.execute("SELECT COUNT(*) FROM video_submissions WHERE status = 'published'") as cursor:
+            published_videos = (await cursor.fetchone())[0]
+
+    stats_text = (
+        "<b>📊 CreatorLoop Real-time Statistikasi</b>\n\n"
+        f"👥 <b>Faol Creatorlar:</b> {active_creators} ta\n"
+        f"🎬 <b>Chiqarilgan Videolar:</b> {published_videos} ta\n\n"
+        "<i>Eslatma: Ushbu ma'lumotlar bazadan avtomatik hisoblanadi.</i>"
+    )
+    await message.answer(stats_text, reply_markup=main_user_kb, parse_mode="HTML")
+
+
+# =========================
 # /start
 # =========================
 
 @dp.message(CommandStart())
 async def start_handler(message: Message):
-
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="🚀 Ariza topshirish",
-                    callback_data="apply"
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="ℹ️ CreatorLoop haqida",
-                    callback_data="about"
-                )
-            ]
+            [InlineKeyboardButton(text="🚀 Ariza topshirish", callback_data="apply")],
+            [InlineKeyboardButton(text="ℹ️ CreatorLoop haqida", callback_data="about")]
         ]
     )
 
     await message.answer(
         "👋 <b>CreatorLoop'ga xush kelibsiz!</b>\n\n"
-        "🇺🇿 O‘zbekistonlik YouTube creatorlar uchun "
-        "yopiq creator hamjamiyati.\n\n"
-        "Bu yerda creatorlar bir-biriga feedback beradi, "
-        "tajriba almashadi, collaboration qiladi va birga rivojlanadi.\n\n"
-        "🎯 Maqsadimiz — shunchaki ko‘p creator yig‘ish emas, "
-        "<b>faol va kuchli community</b> qurish.",
+        "🇺🇿 O‘zbekistonlik YouTube creatorlar uchun yopiq creator hamjamiyati.\n\n"
+        "Bu yerda creatorlar bir-biriga feedback beradi, tajriba almashadi, collaboration qiladi va birga rivojlanadi.\n\n"
+        "🎯 Maqsadimiz — shunchaki ko‘p creator yig‘ish emas, <b>faol va kuchli community</b> qurish.",
         reply_markup=keyboard,
         parse_mode="HTML"
     )
@@ -172,40 +197,26 @@ async def start_handler(message: Message):
 
 @dp.callback_query(F.data == "about")
 async def about_handler(callback: CallbackQuery):
-
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="🚀 Ariza topshirish",
-                    callback_data="apply"
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="🔙 Orqaga",
-                    callback_data="back_start"
-                )
-            ]
+            [InlineKeyboardButton(text="🚀 Ariza topshirish", callback_data="apply")],
+            [InlineKeyboardButton(text="🔙 Orqaga", callback_data="back_start")]
         ]
     )
 
     await callback.message.edit_text(
         "🎬 <b>CreatorLoop nima?</b>\n\n"
-        "CreatorLoop — O‘zbekistonlik YouTube creatorlar "
-        "uchun yaratilayotgan yopiq community.\n\n"
+        "CreatorLoop — O‘zbekistonlik YouTube creatorlar uchun yaratilayotgan yopiq community.\n\n"
         "Bu yerda creatorlar:\n\n"
         "🎬 Videolariga feedback oladi\n"
         "💬 Boshqa creatorlar bilan fikr almashadi\n"
         "🤝 Collaboration qiladi\n"
         "💡 Tajriba almashadi\n"
         "🚀 Birgalikda rivojlanadi\n\n"
-        "Bizning maqsadimiz — kichik bo‘lsa ham "
-        "<b>faol va sifatli creatorlar hamjamiyatini</b> qurish.",
+        "Bizning maqsadimiz — kichik bo‘lsa ham <b>faol va sifatli creatorlar hamjamiyatini</b> qurish.",
         reply_markup=keyboard,
         parse_mode="HTML"
     )
-
     await callback.answer()
 
 
@@ -215,21 +226,10 @@ async def about_handler(callback: CallbackQuery):
 
 @dp.callback_query(F.data == "apply")
 async def apply_handler(callback: CallbackQuery):
-
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="✅ Shartlar bilan tanishdim",
-                    callback_data="accepted_rules"
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="🔙 Orqaga",
-                    callback_data="back_start"
-                )
-            ]
+            [InlineKeyboardButton(text="✅ Shartlar bilan tanishdim", callback_data="accepted_rules")],
+            [InlineKeyboardButton(text="🔙 Orqaga", callback_data="back_start")]
         ]
     )
 
@@ -239,64 +239,47 @@ async def apply_handler(callback: CallbackQuery):
         "📅 YouTube kanali kamida 1 oy oldin ochilgan bo‘lishi\n"
         "👥 500+ obunachiga ega bo‘lishi\n"
         "🎬 YouTube'da faol kontent yaratishi\n"
-        "⚖️ O‘zbekiston qonunchiligiga zid bo‘lmagan "
-        "mavzularda kontent yaratishi\n"
+        "⚖️ O‘zbekiston qonunchiligiga zid bo‘lmagan mavzularda kontent yaratishi\n"
         "🤝 Boshqa creatorlar bilan foydali fikr almashishga tayyor bo‘lishi\n\n"
-        "💡 500 obunachidan kam bo‘lgan creatorlar ham "
-        "alohida ko‘rib chiqilishi mumkin.\n\n"
+        "💡 500 obunachidan kam bo‘lgan creatorlar ham alohida ko‘rib chiqilishi mumkin.\n\n"
         "👀 Har bir ariza admin tomonidan qo‘lda ko‘rib chiqiladi.\n\n"
         "Shartlar bilan tanishib chiqqan bo‘lsangiz, davom etishingiz mumkin.",
         reply_markup=keyboard,
         parse_mode="HTML"
     )
-
     await callback.answer()
 
 
 # =========================
-# Shartlar tasdiqlandi
+# Shartlar tasdiqlandi & FSM
 # =========================
 
 @dp.callback_query(F.data == "accepted_rules")
 async def accepted_rules_handler(callback: CallbackQuery, state: FSMContext):
-
     await state.set_state(Application.name)
-
     await callback.message.edit_text(
-        "🚀 <b>Ajoyib!</b>\n\n"
-        "Arizangizni to‘ldirishni boshlaymiz.\n\n"
-        "Avval ismingizni kiriting:",
+        "🚀 <b>Ajoyib!</b>\n\nArizangizni to‘ldirishni boshlaymiz.\n\nAvval ismingizni kiriting:",
         parse_mode="HTML"
     )
-
     await callback.answer()
 
 @dp.message(Application.name)
 async def name_handler(message: Message, state: FSMContext):
-
     name = message.text.strip()
-
     if len(name) < 2:
-        await message.answer(
-            "❌ Ismingiz juda qisqa.\n\n"
-            "Iltimos, ismingizni qaytadan kiriting:"
-        )
+        await message.answer("❌ Ismingiz juda qisqa.\n\nIltimos, ismingizni qaytadan kiriting:")
         return
 
     await state.update_data(name=name)
     await state.set_state(Application.youtube)
 
     await message.answer(
-        f"Rahmat, <b>{name}</b>! ✅\n\n"
-        "📺 Endi YouTube kanalingiz havolasini yuboring.\n\n"
-        "Masalan:\n"
-        "<code>https://youtube.com/@username</code>",
+        f"Rahmat, <b>{name}</b>! ✅\n\n📺 Endi YouTube kanalingiz havolasini yuboring.\n\nMasalan:\n<code>https://youtube.com/@username</code>",
         parse_mode="HTML"
     )
 
 @dp.message(Application.youtube)
 async def youtube_handler(message: Message, state: FSMContext):
-
     youtube_url = message.text.strip()
 
     if not (
@@ -308,10 +291,7 @@ async def youtube_handler(message: Message, state: FSMContext):
         or youtube_url.startswith("http://www.youtube.com/")
     ):
         await message.answer(
-            "❌ Bu YouTube kanal havolasiga o‘xshamayapti.\n\n"
-            "Iltimos, YouTube kanalingiz havolasini yuboring.\n\n"
-            "Masalan:\n"
-            "<code>https://youtube.com/@username</code>",
+            "❌ Bu YouTube kanal havolasiga o‘xshamayapti.\n\nIltimos, YouTube kanalingiz havolasini yuboring.\n\nMasalan:\n<code>https://youtube.com/@username</code>",
             parse_mode="HTML"
         )
         return
@@ -321,43 +301,21 @@ async def youtube_handler(message: Message, state: FSMContext):
 
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
-            [
-                InlineKeyboardButton(text="⚽ Futbol", callback_data="niche_football"),
-                InlineKeyboardButton(text="🎮 Gaming", callback_data="niche_gaming")
-            ],
-            [
-                InlineKeyboardButton(text="💻 Texnologiya", callback_data="niche_tech"),
-                InlineKeyboardButton(text="📚 Ta'lim", callback_data="niche_education")
-            ],
-            [
-                InlineKeyboardButton(text="🎥 Vlog", callback_data="niche_vlog"),
-                InlineKeyboardButton(text="🎭 Ko‘ngilochar", callback_data="niche_entertainment")
-            ],
-            [
-                InlineKeyboardButton(text="📰 Yangiliklar", callback_data="niche_news"),
-                InlineKeyboardButton(text="🎨 Boshqa", callback_data="niche_other")
-            ]
+            [InlineKeyboardButton(text="⚽ Futbol", callback_data="niche_football"), InlineKeyboardButton(text="🎮 Gaming", callback_data="niche_gaming")],
+            [InlineKeyboardButton(text="💻 Texnologiya", callback_data="niche_tech"), InlineKeyboardButton(text="📚 Ta'lim", callback_data="niche_education")],
+            [InlineKeyboardButton(text="🎥 Vlog", callback_data="niche_vlog"), InlineKeyboardButton(text="🎭 Ko‘ngilochar", callback_data="niche_entertainment")],
+            [InlineKeyboardButton(text="📰 Yangiliklar", callback_data="niche_news"), InlineKeyboardButton(text="🎨 Boshqa", callback_data="niche_other")]
         ]
     )
 
-    await message.answer(
-        "Ajoyib! 📺 YouTube kanalingiz qabul qilindi.\n\n"
-        "Endi kontentingizning asosiy yo‘nalishini tanlang:",
-        reply_markup=keyboard
-    )
+    await message.answer("Ajoyib! 📺 YouTube kanalingiz qabul qilindi.\n\nEndi kontentingizning asosiy yo‘nalishini tanlang:", reply_markup=keyboard)
 
 @dp.callback_query(F.data.startswith("niche_"))
 async def niche_handler(callback: CallbackQuery, state: FSMContext):
-
     niche_map = {
-        "niche_football": "⚽ Futbol",
-        "niche_gaming": "🎮 Gaming",
-        "niche_tech": "💻 Texnologiya",
-        "niche_education": "📚 Ta'lim",
-        "niche_vlog": "🎥 Vlog",
-        "niche_entertainment": "🎭 Ko‘ngilochar",
-        "niche_news": "📰 Yangiliklar",
-        "niche_other": "🎨 Boshqa"
+        "niche_football": "⚽ Futbol", "niche_gaming": "🎮 Gaming", "niche_tech": "💻 Texnologiya",
+        "niche_education": "📚 Ta'lim", "niche_vlog": "🎥 Vlog", "niche_entertainment": "🎭 Ko‘ngilochar",
+        "niche_news": "📰 Yangiliklar", "niche_other": "🎨 Boshqa"
     }
 
     niche = niche_map.get(callback.data)
@@ -366,37 +324,23 @@ async def niche_handler(callback: CallbackQuery, state: FSMContext):
     await state.set_state(Application.experience)
 
     await callback.message.edit_text(
-        f"✅ Yo‘nalish: <b>{niche}</b>\n\n"
-        "📅 YouTube'da qancha vaqtdan beri kontent yaratasiz?",
+        f"✅ Yo‘nalish: <b>{niche}</b>\n\n📅 YouTube'da qancha vaqtdan beri kontent yaratasiz?",
         reply_markup=InlineKeyboardMarkup(
             inline_keyboard=[
-                [
-                    InlineKeyboardButton(text="1–3 oy", callback_data="exp_1_3"),
-                    InlineKeyboardButton(text="3–6 oy", callback_data="exp_3_6")
-                ],
-                [
-                    InlineKeyboardButton(text="6–12 oy", callback_data="exp_6_12"),
-                    InlineKeyboardButton(text="1–2 yil", callback_data="exp_1_2")
-                ],
-                [
-                    InlineKeyboardButton(text="2+ yil", callback_data="exp_2_plus")
-                ]
+                [InlineKeyboardButton(text="1–3 oy", callback_data="exp_1_3"), InlineKeyboardButton(text="3–6 oy", callback_data="exp_3_6")],
+                [InlineKeyboardButton(text="6–12 oy", callback_data="exp_6_12"), InlineKeyboardButton(text="1–2 yil", callback_data="exp_1_2")],
+                [InlineKeyboardButton(text="2+ yil", callback_data="exp_2_plus")]
             ]
         ),
         parse_mode="HTML"
     )
-
     await callback.answer()
 
 @dp.callback_query(F.data.startswith("exp_"))
 async def experience_handler(callback: CallbackQuery, state: FSMContext):
-
     experience_map = {
-        "exp_1_3": "1–3 oy",
-        "exp_3_6": "3–6 oy",
-        "exp_6_12": "6–12 oy",
-        "exp_1_2": "1–2 yil",
-        "exp_2_plus": "2+ yil"
+        "exp_1_3": "1–3 oy", "exp_3_6": "3–6 oy", "exp_6_12": "6–12 oy",
+        "exp_1_2": "1–2 yil", "exp_2_plus": "2+ yil"
     }
 
     experience = experience_map.get(callback.data)
@@ -406,32 +350,18 @@ async def experience_handler(callback: CallbackQuery, state: FSMContext):
 
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
-            [
-                InlineKeyboardButton(text="💬 Feedback", callback_data="goal_feedback"),
-                InlineKeyboardButton(text="🤝 Collaboration", callback_data="goal_collab")
-            ],
-            [
-                InlineKeyboardButton(text="👥 Networking", callback_data="goal_networking"),
-                InlineKeyboardButton(text="💡 Tajriba almashish", callback_data="goal_experience")
-            ],
-            [
-                InlineKeyboardButton(text="🚀 Birga rivojlanish", callback_data="goal_growth")
-            ],
-            [
-                InlineKeyboardButton(text="➡️ Davom etish", callback_data="goals_done")
-            ]
+            [InlineKeyboardButton(text="💬 Feedback", callback_data="goal_feedback"), InlineKeyboardButton(text="🤝 Collaboration", callback_data="goal_collab")],
+            [InlineKeyboardButton(text="👥 Networking", callback_data="goal_networking"), InlineKeyboardButton(text="💡 Tajriba almashish", callback_data="goal_experience")],
+            [InlineKeyboardButton(text="🚀 Birga rivojlanish", callback_data="goal_growth")],
+            [InlineKeyboardButton(text="➡️ Davom etish", callback_data="goals_done")]
         ]
     )
 
     await callback.message.edit_text(
-        f"📅 Tajriba: <b>{experience}</b>\n\n"
-        "🎯 <b>CreatorLoop'dan nimani kutyapsiz?</b>\n\n"
-        "Bir nechta variantni tanlashingiz mumkin.\n"
-        "Tanlaganlaringiz yonida ✅ paydo bo‘ladi.",
+        f"📅 Tajriba: <b>{experience}</b>\n\n🎯 <b>CreatorLoop'dan nimani kutyapsiz?</b>\n\nBir nechta variantni tanlashingiz mumkin.\nTanlaganlaringiz yonida ✅ paydo bo‘ladi.",
         reply_markup=keyboard,
         parse_mode="HTML"
     )
-
     await callback.answer()
 
 @dp.callback_query(Application.goals, F.data == "goals_done")
@@ -446,27 +376,16 @@ async def goals_done_handler(callback: CallbackQuery, state: FSMContext):
     await state.set_state(Application.skills)
 
     await callback.message.edit_text(
-        "💡 <b>Endi communityga nima bera olishingizni yozing.</b>\n\n"
-        "Masalan:\n"
-        "• YouTube bo‘yicha tajriba\n"
-        "• Video editing\n"
-        "• Thumbnail\n"
-        "• Ssenariy yozish\n"
-        "• Feedback berish\n"
-        "• Collaboration\n\n"
-        "O‘zingizga mos keladigan narsalarni yozing:",
+        "💡 <b>Endi communityga nima bera olishingizni yozing.</b>\n\nMasalan:\n• YouTube bo‘yicha tajriba\n• Video editing\n• Thumbnail\n• Ssenariy yozish\n• Feedback berish\n• Collaboration\n\nO‘zingizga mos keladigan narsalarni yozing:",
         parse_mode="HTML"
     )
-
     await callback.answer()
 
 @dp.callback_query(Application.goals, F.data.startswith("goal_"))
 async def goal_toggle_handler(callback: CallbackQuery, state: FSMContext):
     goal_map = {
-        "goal_feedback": "💬 Feedback",
-        "goal_collab": "🤝 Collaboration",
-        "goal_networking": "👥 Networking",
-        "goal_experience": "💡 Tajriba almashish",
+        "goal_feedback": "💬 Feedback", "goal_collab": "🤝 Collaboration",
+        "goal_networking": "👥 Networking", "goal_experience": "💡 Tajriba almashish",
         "goal_growth": "🚀 Birga rivojlanish"
     }
 
@@ -494,9 +413,7 @@ async def goal_toggle_handler(callback: CallbackQuery, state: FSMContext):
             [
                 InlineKeyboardButton(text=("✅ " if "🚀 Birga rivojlanish" in goals else "") + "🚀 Birga rivojlanish", callback_data="goal_growth")
             ],
-            [
-                InlineKeyboardButton(text="➡️ Davom etish", callback_data="goals_done")
-            ]
+            [InlineKeyboardButton(text="➡️ Davom etish", callback_data="goals_done")]
         ]
     )
 
@@ -508,11 +425,7 @@ async def skills_handler(message: Message, state: FSMContext):
     skills = message.text.strip()
 
     if len(skills) < 3:
-        await message.answer(
-            "❌ Javobingiz juda qisqa.\n\n"
-            "Iltimos, communityga qanday foyda bera olishingizni "
-            "biroz batafsilroq yozing:"
-        )
+        await message.answer("❌ Javobingiz juda qisqa.\n\nIltimos, communityga qanday foyda bera olishingizni biroz batafsilroq yozing:")
         return
 
     await state.update_data(skills=skills)
@@ -521,7 +434,7 @@ async def skills_handler(message: Message, state: FSMContext):
     goals_formatted = "\n".join([f"• {g}" for g in data.get("goals", [])])
 
     preview_text = (
-        "📋 <b>ARIZANGIZNI TASHDIQLANG</b>\n\n"
+        "📋 <b>ARIZANGIZNI TASDIQLANG</b>\n\n"
         f"👤 <b>Ism:</b> {data.get('name')}\n"
         f"📺 <b>YouTube:</b> {data.get('youtube_url')}\n"
         f"🎬 <b>Yo‘nalish:</b> {data.get('niche')}\n"
@@ -574,9 +487,7 @@ async def submit_application_handler(callback: CallbackQuery, state: FSMContext)
         await db.commit()
 
     await callback.message.edit_text(
-        "🎉 <b>Arizangiz qabul qilindi!</b>\n\n"
-        "Adminlar arizangizni va YouTube kanalingizni ko‘rib chiqishadi.\n"
-        "Natija tez orada ushbu bot orqali yuboriladi.",
+        "🎉 <b>Arizangiz qabul qilindi!</b>\n\nAdminlar arizangizni va YouTube kanalingizni ko‘rib chiqishadi.\nNatija tez orada ushbu bot orqali yuboriladi.",
         parse_mode="HTML"
     )
 
@@ -669,19 +580,13 @@ async def approve_user_handler(callback: CallbackQuery):
         text += (
             "📌 <b>Video yuborish tartibi va qoidalari:</b>\n"
             "• Faqat arizada ko'rsatilgan <b>shaxsiy YouTube kanalingizga</b> yuklangan videolarni yuborishingiz mumkin.\n"
-            "• Yuborilgan videolar hamjamiyat kanalida e'lon qilinadi va boshqa creatorlardan **xolis feedback (fikr-mulohaza)** olasiz.\n"
+            "• Yuborilgan videolar hamjamiyat kanalida e'lon qilinadi va boshqa creatorlardan <b>xolis feedback (fikr-mulohaza)</b> olasiz.\n"
             "• Kunlik video yuborish cheklovi: <b>max 2 ta video</b>.\n\n"
             "⚠️ <i>Eslatma: Video yuborishdan oldin har ikkala manbaga ham a'zo bo'lishingiz shart!</i>\n\n"
-            "Tayyor bo'lsangiz, pastdagi tugma orqali videongizni yuboring:"
+            "Tayyor bo'lsangiz, quyidagi menyu orqali videolaringizni yuborishingiz mumkin:"
         )
 
-        keyboard = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [InlineKeyboardButton(text="🎬 Video yuborish", callback_data="submit_video")]
-            ]
-        )
-
-        await bot.send_message(chat_id=target_user_id, text=text, reply_markup=keyboard, parse_mode="HTML")
+        await bot.send_message(chat_id=target_user_id, text=text, reply_markup=main_user_kb, parse_mode="HTML")
         await callback.message.edit_text(callback.message.text + "\n\n✅ <b>QABUL QILINDI</b>", parse_mode="HTML")
     except Exception as e:
         await callback.answer(f"Xabar yuborishda xatolik: {e}", show_alert=True)
@@ -700,10 +605,7 @@ async def reject_user_handler(callback: CallbackQuery):
     try:
         await bot.send_message(
             chat_id=target_user_id,
-            text=(
-                "Afsuski, hozircha CreatorLoop'ga qabul qilina olmadingiz.\n\n"
-                "Rivojlanishdan to'xtamang! Keyinchalik qayta ariza topshirishingiz mumkin."
-            ),
+            text="Afsuski, hozircha CreatorLoop'ga qabul qilina olmadingiz.\n\nRivojlanishdan to'xtamang! Keyinchalik qayta ariza topshirishingiz mumkin.",
             parse_mode="HTML"
         )
         await callback.message.edit_text(callback.message.text + "\n\n❌ <b>RAD ETILDI</b>", parse_mode="HTML")
@@ -715,7 +617,6 @@ async def reject_user_handler(callback: CallbackQuery):
 
 @dp.callback_query(F.data == "back_start")
 async def back_start_handler(callback: CallbackQuery):
-
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="🚀 Ariza topshirish", callback_data="apply")],
@@ -724,14 +625,10 @@ async def back_start_handler(callback: CallbackQuery):
     )
 
     await callback.message.edit_text(
-        "👋 <b>CreatorLoop'ga xush kelibsiz!</b>\n\n"
-        "🇺🇿 O‘zbekistonlik YouTube creatorlar uchun "
-        "yopiq creator hamjamiyati.\n\n"
-        "🎯 <b>Faol creatorlar. Real feedback. Birgalikda rivojlanish.</b>",
+        "👋 <b>CreatorLoop'ga xush kelibsiz!</b>\n\n🇺🇿 O‘zbekistonlik YouTube creatorlar uchun yopiq creator hamjamiyati.\n\n🎯 <b>Faol creatorlar. Real feedback. Birgalikda rivojlanish.</b>",
         reply_markup=keyboard,
         parse_mode="HTML"
     )
-
     await callback.answer()
 
 
@@ -806,7 +703,7 @@ async def admin_panel_handler(message: Message):
 
 
 # =========================
-# VIDEO SUBMISSION PROCESS (LIMITS INTEGRATED)
+# VIDEO SUBMISSION PROCESS
 # =========================
 
 @dp.message(F.text == "🎬 Yangi video yuborish")
@@ -814,7 +711,6 @@ async def admin_panel_handler(message: Message):
 async def start_video_submission(event: Message | CallbackQuery, state: FSMContext):
     user_id = event.from_user.id
 
-    # 1. Kanal/guruh a'zoligini tekshirish
     in_group, in_channel = await check_user_membership(user_id)
 
     if not in_group or not in_channel:
@@ -838,7 +734,6 @@ async def start_video_submission(event: Message | CallbackQuery, state: FSMConte
             await event.answer(text, parse_mode="HTML")
         return
 
-    # 2. Kunlik limitni tekshirish (Max 2 ta)
     can_submit = await check_daily_video_limit(user_id)
     if not can_submit:
         text = (
@@ -879,7 +774,6 @@ async def process_video_url(message: Message, state: FSMContext):
 
     user = message.from_user
 
-    # Havola yuborilgan paytda limitni qayta tekshirish
     can_submit = await check_daily_video_limit(user.id)
     if not can_submit:
         await state.clear()
@@ -892,9 +786,8 @@ async def process_video_url(message: Message, state: FSMContext):
         )
         return
 
-    # Yuborilgan videoni bazaga yozib qo'yamiz (Limit hisobi uchun)
     async with aiosqlite.connect(DB_NAME) as db:
-        await db.execute("INSERT INTO video_submissions (telegram_id) VALUES (?)", (user.id,))
+        await db.execute("INSERT INTO video_submissions (telegram_id, status) VALUES (?, 'pending')", (user.id,))
         await db.commit()
 
     await state.clear()
@@ -953,6 +846,10 @@ async def publish_video_handler(callback: CallbackQuery):
         try:
             await bot.send_message(chat_id=CHANNEL_ID, text=post_text, parse_mode="HTML")
             
+            async with aiosqlite.connect(DB_NAME) as db:
+                await db.execute("UPDATE video_submissions SET status = 'published' WHERE telegram_id = ? AND status = 'pending'", (user_id,))
+                await db.commit()
+
             await bot.send_message(
                 chat_id=user_id,
                 text="🎉 <b>Tabriklaymiz!</b> Videongiz kanalga joylandi.",
