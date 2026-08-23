@@ -34,7 +34,7 @@ TURSO_AUTH_TOKEN = os.getenv("TURSO_AUTH_TOKEN")
 
 def get_db_client():
     """Turso bazasiga asinxron client yaratadi"""
-    return libsql_client.create_client_async(
+    return libsql_client.create_client(
         url=TURSO_DATABASE_URL,
         auth_token=TURSO_AUTH_TOKEN
     )
