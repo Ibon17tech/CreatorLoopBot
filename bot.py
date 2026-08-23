@@ -99,6 +99,10 @@ class Application(StatesGroup):
 class VideoSubmission(StatesGroup):
     waiting_for_url = State()
 
+class AdminReject(StatesGroup):
+    application_reason = State()
+    video_reason = State()
+
 dp = Dispatcher(storage=MemoryStorage())
 
 async def check_user_membership(user_id: int) -> tuple[bool, bool]:
@@ -625,24 +629,74 @@ async def approve_user_handler(callback: CallbackQuery):
 
 
 @dp.callback_query(F.data.startswith("reject_"))
-async def reject_user_handler(callback: CallbackQuery):
+async def reject_user_handler(callback: CallbackQuery, state: FSMContext):
     target_user_id = int(callback.data.split("_")[1])
 
+    await state.update_data(
+        reject_target_id=target_user_id,
+        reject_chat_id=callback.message.chat.id,
+        reject_message_id=callback.message.message_id,
+        reject_original_text=callback.message.text
+    )
+    await state.set_state(AdminReject.application_reason)
+
+    await callback.message.answer(
+        f"❓ Foydalanuvchi (ID: <code>{target_user_id}</code>) arizasini rad etish sababini yozing.\n"
+        "Sabab foydalanuvchiga xabar sifatida yuboriladi.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="➡️ Sababsiz rad etish", callback_data="skip_reason_app")
+        ]]),
+        parse_mode="HTML"
+    )
+    await callback.answer()
+
+
+async def finalize_application_rejection(target_user_id: int, reason: str | None, chat_id: int, message_id: int, original_text: str):
     async with get_db_client() as client:
         await client.execute("UPDATE applications SET status = 'rejected' WHERE telegram_id = ?", [target_user_id])
 
+    text = "Afsuski, hozircha CreatorLoop'ga qabul qilina olmadingiz.\n\n"
+    if reason:
+        text += f"📝 <b>Sabab:</b> {reason}\n\n"
+    text += "Rivojlanishdan to'xtamang! Keyinchalik qayta ariza topshirishingiz mumkin."
+
     try:
         kb = await get_main_keyboard(target_user_id)
-        await bot.send_message(
-            chat_id=target_user_id,
-            text="Afsuski, hozircha CreatorLoop'ga qabul qilina olmadingiz.\n\nRivojlanishdan to'xtamang! Keyinchalik qayta ariza topshirishingiz mumkin.",
-            reply_markup=kb,
+        await bot.send_message(chat_id=target_user_id, text=text, reply_markup=kb, parse_mode="HTML")
+        await bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=message_id,
+            text=original_text + f"\n\n❌ <b>RAD ETILDI</b>" + (f"\n📝 Sabab: {reason}" if reason else ""),
             parse_mode="HTML"
         )
-        await callback.message.edit_text(callback.message.text + "\n\n❌ <b>RAD ETILDI</b>", parse_mode="HTML")
     except Exception as e:
-        await callback.answer(f"Foydalanuvchiga xabar yuborib bo'lmadi: {e}", show_alert=True)
+        await bot.send_message(chat_id=chat_id, text=f"⚠️ Foydalanuvchiga xabar yuborib bo'lmadi: {e}")
 
+
+@dp.message(AdminReject.application_reason)
+async def process_application_reject_reason(message: Message, state: FSMContext):
+    data = await state.get_data()
+    await finalize_application_rejection(
+        data.get("reject_target_id"),
+        message.text.strip(),
+        data.get("reject_chat_id"),
+        data.get("reject_message_id"),
+        data.get("reject_original_text")
+    )
+    await state.clear()
+
+
+@dp.callback_query(F.data == "skip_reason_app")
+async def skip_application_reject_reason(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    await finalize_application_rejection(
+        data.get("reject_target_id"),
+        None,
+        data.get("reject_chat_id"),
+        data.get("reject_message_id"),
+        data.get("reject_original_text")
+    )
+    await state.clear()
     await callback.answer()
 
 
@@ -923,7 +977,7 @@ async def publish_video_handler(callback: CallbackQuery):
 
 
 @dp.callback_query(F.data.startswith("rej_v_"))
-async def reject_video_handler(callback: CallbackQuery):
+async def reject_video_handler(callback: CallbackQuery, state: FSMContext):
     submission_id = int(callback.data.split("_")[-1])
 
     async with get_db_client() as client:
@@ -942,26 +996,80 @@ async def reject_video_handler(callback: CallbackQuery):
             await callback.answer("⚠️ Bu video allaqachon ko'rib chiqilgan.", show_alert=True)
             return
 
+    await state.update_data(
+        reject_submission_id=submission_id,
+        reject_video_user_id=user_id,
+        reject_chat_id=callback.message.chat.id,
+        reject_message_id=callback.message.message_id,
+        reject_original_text=callback.message.text
+    )
+    await state.set_state(AdminReject.video_reason)
+
+    await callback.message.answer(
+        f"❓ Video (ID: <code>{submission_id}</code>) rad etish sababini yozing.\n"
+        "Sabab foydalanuvchiga xabar sifatida yuboriladi.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="➡️ Sababsiz rad etish", callback_data="skip_reason_video")
+        ]]),
+        parse_mode="HTML"
+    )
+    await callback.answer()
+
+
+async def finalize_video_rejection(submission_id: int, user_id: int, reason: str | None, chat_id: int, message_id: int, original_text: str):
+    async with get_db_client() as client:
         await client.execute(
             "UPDATE video_submissions SET status = 'rejected' WHERE id = ? AND status = 'pending'",
             [submission_id]
         )
 
+    text = "❌ Afsuski, siz yuborgan video adminga ma'qul kelmadi va rad etildi.\n\n"
+    if reason:
+        text += f"📝 <b>Sabab:</b> {reason}"
+
     try:
         kb = await get_main_keyboard(user_id)
-        await bot.send_message(
-            chat_id=user_id,
-            text="❌ Afsuski, siz yuborgan video adminga ma'qul kelmadi va rad etildi.",
-            reply_markup=kb,
-            parse_mode="HTML"
-        )
+        await bot.send_message(chat_id=user_id, text=text, reply_markup=kb, parse_mode="HTML")
     except Exception as e:
         print(f"Foydalanuvchiga rad xabarini yuborishda xatolik: {e}")
 
-    await callback.message.edit_text(
-        callback.message.text + "\n\n❌ <b>VIDEO RAD ETILDI</b>",
-        parse_mode="HTML"
+    try:
+        await bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=message_id,
+            text=original_text + "\n\n❌ <b>VIDEO RAD ETILDI</b>" + (f"\n📝 Sabab: {reason}" if reason else ""),
+            parse_mode="HTML"
+        )
+    except Exception as e:
+        await bot.send_message(chat_id=chat_id, text=f"⚠️ Xabarni yangilashda xatolik: {e}")
+
+
+@dp.message(AdminReject.video_reason)
+async def process_video_reject_reason(message: Message, state: FSMContext):
+    data = await state.get_data()
+    await finalize_video_rejection(
+        data.get("reject_submission_id"),
+        data.get("reject_video_user_id"),
+        message.text.strip(),
+        data.get("reject_chat_id"),
+        data.get("reject_message_id"),
+        data.get("reject_original_text")
     )
+    await state.clear()
+
+
+@dp.callback_query(F.data == "skip_reason_video")
+async def skip_video_reject_reason(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    await finalize_video_rejection(
+        data.get("reject_submission_id"),
+        data.get("reject_video_user_id"),
+        None,
+        data.get("reject_chat_id"),
+        data.get("reject_message_id"),
+        data.get("reject_original_text")
+    )
+    await state.clear()
     await callback.answer()
 
 
